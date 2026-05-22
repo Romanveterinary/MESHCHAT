@@ -1,5 +1,5 @@
 // =========================================================================
-// АВТОНОМНЕ ЯДРО MESH-МЕРЕЖІ ТА РАЦІЇ (ПОВНА ВЕРСІЯ)
+// АВТОНОМНЕ ЯДРО MESH-МЕРЕЖІ ТА РАЦІЇ (ПОВНА ВЕРСІЯ З HTTPS МАПОЮ)
 // =========================================================================
 
 let map = null;
@@ -24,18 +24,27 @@ window.addEventListener('DOMContentLoaded', () => {
     initLocalMeshTransport(); // Запуск радіосканера при старті
 });
 
-// 1. ЗАПУСК ОФЛАЙН-МАПИ (Google Satellite)
+// 1. ЗАПУСК ОФЛАЙН/ОНЛАЙН МАПИ (З захистом від блокування Android)
 function initMap() {
     if (typeof L === 'undefined') return;
     try {
-        let satelliteLayer = L.tileLayer('http://mt0.google.com/vt/lyrs=s&hl=uk&x={x}&y={y}&z={z}', {
+        // Створюємо карту
+        map = L.map('map', { 
+            zoomControl: false, 
+            doubleClickZoom: false 
+        }).setView([49.0, 31.0], 6);
+
+        // Підключаємо СУПУТНИК через захищений HTTPS (щоб Android не блокував відображення)
+        let satelliteLayer = L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
             maxZoom: 20,
             attribution: 'Tactical Offline Mesh Map'
         });
-
-        map = L.map('map', { zoomControl: false, doubleClickZoom: false }).setView([49.0, 31.0], 6);
         satelliteLayer.addTo(map);
-    } catch (e) { console.error("Помилка карти:", e); }
+
+        console.log("Tactical Map: Захищений HTTPS шар ініціалізовано.");
+    } catch (e) { 
+        console.error("Помилка карти:", e); 
+    }
 }
 
 // 2. АВТОНОМНИЙ ПОШУК СУПУТНИКІВ (GPS)
