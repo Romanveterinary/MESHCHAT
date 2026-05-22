@@ -35,11 +35,15 @@ jobs:
         run: |
           npx cap add android
 
-      - name: Configure Android Hardware Permissions
+      - name: Configure Android Hardware and Network Permissions
         run: |
+          # 1. Додаємо нативні дозволи на роботу GPS та Bluetooth в AndroidManifest
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-          PERMISSIONS="<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" \/><uses-permission android:name=\"android.permission.BLUETOOTH\" \/><uses-permission android:name=\"android.permission.BLUETOOTH_ADMIN\" \/><uses-permission android:name=\"android.permission.BLUETOOTH_CONNECT\" \/><uses-permission android:name=\"android.permission.BLUETOOTH_SCAN\" \/><uses-permission android:name=\"android.permission.BLUETOOTH_ADVERTISE\" \/>"
+          PERMISSIONS="<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" \/><uses-permission android:name=\"android.permission.BLUETOOTH\" \/><uses-permission android:name=\"android.permission.BLUETOOTH_ADMIN\" \/><uses-permission android:name=\"android.permission.INTERNET\" \/><uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" \/>"
           sed -i "s/<manifest[^>]*>/&\n$PERMISSIONS/" $MANIFEST_PATH
+          
+          # 2. Дозволяємо локальний HTTP трафік без шифрування (Cleartext HTTP)
+          sed -i 's/<application[^>]*>/& android:usesCleartextTraffic="true"/' $MANIFEST_PATH
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
