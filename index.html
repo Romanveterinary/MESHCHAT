@@ -6,6 +6,7 @@
     <title>Tactical Mesh Navigator</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -27,11 +28,25 @@
     <div id="tactic-panel">
         
         <div class="row">
-            <input type="text" id="my-callsign" value="Боєць-1" placeholder="Ваш позивний" style="flex: 1;">
-            <button class="btn btn-sec" id="reset-chat-btn" style="flex: 1;">🌍 ЕФІР</button>
+            <input type="text" id="my-callsign" value="Боєць-1" placeholder="Позивний" style="flex: 1;">
+            <select id="hardware-select" style="flex: 1.2; font-weight: bold;">
+                <option value="WIFI_DIRECT">📡 АВТОНОМНИЙ Wi-Fi</option>
+                <option value="BLUETOOTH">⚡ BLUETOOTH MESH</option>
+                <option value="LORA">📻 РАДІО LORA (868)</option>
+            </select>
         </div>
 
-        <div style="padding: 0 12px;"><span style="font-size: 11px; color: #888;">ГРУПА В ЕФІРІ (НАТИСНІТЬ ДЛЯ ПРИВАТУ):</span></div>
+        <div class="row" style="padding-top: 0; padding-bottom: 4px;">
+            <button class="btn btn-sec" id="gen-qr-btn" style="flex: 1; padding: 6px; font-size: 11px;">СТВОРІТЬ ЛАНК</button>
+            <button class="btn btn-sec" id="scan-qr-btn" style="flex: 1; padding: 6px; font-size: 11px;">ЗЧИТАТИ ЛАНК</button>
+            <button class="btn btn-sec" id="reset-chat-btn" style="flex: 0.5; padding: 6px; font-size: 11px; color:#4ade80;">🌍 ЕФІР</button>
+        </div>
+
+        <div id="qr-modal" style="display: none; text-align: center; background: #111; padding: 10px; border-bottom: 1px solid #222;">
+            <canvas id="qr-canvas" style="background: #fff; padding: 5px; margin: 0 auto; display: block; max-width: 150px;"></canvas>
+            <span style="font-size: 10px; color: #888;">Зчитайте цей код камерою іншого пристрою для лінку</span>
+        </div>
+
         <div id="peers-zone" style="margin: 2px 12px 6px 12px;">📡 Пошук радіосигналу...</div>
 
         <div style="padding: 0 12px;"><span id="chat-target" style="font-size: 11px; color: #4ade80; font-weight: bold;">🌍 РЕЖИМ: ЗАГАЛЬНИЙ ЕФІР (ДЛЯ ВСІХ)</span></div>
