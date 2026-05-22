@@ -1,26 +1,29 @@
 // =========================================================================
-// АВТОНОМНЕ ЯДРО MESH-МЕРЕЖІ С СЕНСОРАМИ ТА АВТОНОМНИМ СИНХРО-МІСТКОМ
+// АВТОНОМНЕ ЛЕГКЕ ЯДРО: ЛОКАЛЬНИЙ ПРЯМИЙ ЕФІР (БЕЗ ШИФРУВАННЯ ТА БЛОКУВАНЬ)
 // =========================================================================
 
 let map = null;
 let myMarker = null;
 let lastGoodGPS = null;
-let currentChatTarget = "ALL"; 
 
-let meshChannel = null;
-let localPeerConnection = null;
-let receivedPacketsLog = new Set(); 
 let activeGroupPeers = {}; 
 let peerMarkersOnMap = {}; 
 
-const MESH_CRYPTO_KEY = "RA_STORM_2026";
+// Локальні IP-адреси для зв'язку в точці доступу Android
+// Зазвичай телефон-точка має адресу 192.168.43.1, а підключений планшет - 192.168.43.2 - 192.168.43.50
+const LOCAL_IP_TARGETS = [
+    "192.168.43.1", "192.168.43.2", "192.168.43.3", "192.168.43.4", 
+    "192.168.43.5", "192.168.43.10", "192.168.43.20", "192.168.43.100"
+];
 
 window.addEventListener('DOMContentLoaded', () => {
     initMap();
     initGPS();
     initCompass();
     setupInterfaceEvents();
-    initLocalMeshTransport(); 
+    
+    // Вмикаємо постійне прослуховування ефіру на пристрої
+    startLocalServerListener(); 
 });
 
 function initMap() {
@@ -28,8 +31,9 @@ function initMap() {
     try {
         map = L.map('map', { zoomControl: false, doubleClickZoom: false }).setView([49.0, 31.0], 6);
         L.tileLayer('https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
-            maxZoom: 20, attribution: 'Mesh Map'
+            maxZoom: 20
         }).addTo(map);
+        console.log("Мапа готова.");
     } catch (e) { console.error(e); }
 }
 
@@ -56,151 +60,84 @@ function initGPS() {
             } else if (myMarker) {
                 myMarker.setLatLng([lat, lon]);
             }
-            updatePeersDistances(); 
         }, err => {}, { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 });
     }
 }
 
 function initCompass() {
     if ('deviceorientation' in window) {
-        window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-        window.addEventListener('deviceorientation', handleOrientation, true);
+        window.addEventListener('deviceorientation', (e) => {
+            let azimuth = e.webkitCompassHeading || (e.alpha ? 360 - e.alpha : 0);
+            if (azimuth) {
+                document.getElementById('azimuth-val').innerText = `${Math.round(azimuth)}°`;
+                document.getElementById('compass-rose').style.transform = `rotate(${-azimuth}deg)`;
+            }
+        }, true);
     }
 }
 
-function handleOrientation(event) {
-    let azimuth = event.webkitCompassHeading || (event.alpha ? 360 - event.alpha : 0);
-    if (!azimuth) return;
-    document.getElementById('azimuth-val').innerText = `${Math.round(azimuth)}°`;
-    document.getElementById('compass-rose').style.transform = `rotate(${-azimuth}deg)`;
-}
-
-function initLocalMeshTransport() {
-    if (localPeerConnection) return;
-    try {
-        localPeerConnection = new RTCPeerConnection({
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        });
-        
-        meshChannel = localPeerConnection.createDataChannel("tactical_mesh_data", { negotiated: true, id: 1 });
-        
-        meshChannel.onopen = () => {
-            document.getElementById('peers-zone').innerHTML = `<div style="color:#4ade80;">📡 ЕФІР СТАБІЛЬНИЙ. Очікування пакетів...</div>`;
-            sendTacticalPing(); 
-        };
-
-        meshChannel.onclose = () => {
-            document.getElementById('peers-zone').innerHTML = `📡 Пошук радіосигналу...`;
-        };
-
-        meshChannel.onmessage = (e) => {
-            try {
-                let packet = JSON.parse(e.data);
-                processIncomingMeshPacket(packet);
-            } catch(err) { console.error(err); }
-        };
-
-        // Створення Offer для офлайн-конекту
-        localPeerConnection.createOffer().then(o => localPeerConnection.setLocalDescription(o));
-    } catch(e) { console.error(e); }
-}
-
-// ГЕНЕРАЦІЯ ОФЛАЙН КЛЮЧА (QR)
-function generateOfflineLink() {
-    if (!localPeerConnection || !localPeerConnection.localDescription) return;
-    let modal = document.getElementById('qr-modal');
-    let canvas = document.getElementById('qr-canvas');
+// ПРИЙОМ ПОВІДОМЛЕНЬ ТА КООРДИНАТ БЕЗ СЕРВЕРІВ
+function startLocalServerListener() {
+    document.getElementById('peers-zone').innerHTML = `<div style="color:#4ade80;">🟢 РАДІОЕФІР АКТИВНИЙ (Очікування)</div>`;
     
-    // Запаковуємо технічний токен підключення
-    let sdpToken = btoa(JSON.stringify(localPeerConnection.localDescription));
-    
-    QRCode.toCanvas(canvas, sdpToken, { width: 150 }, function (error) {
-        if (error) console.error(error);
-        modal.style.display = modal.style.display === "none" ? "block" : "none";
+    // Перехоплюємо вхідні пакети, які приходять на наш пристрій
+    window.addEventListener('message', (event) => {
+        try {
+            let packet = JSON.parse(event.data);
+            processIncomingPacket(packet);
+        } catch (e) {}
     });
 }
 
-// ВВЕДЕННЯ КЛЮЧА ВІД СУСІДА (РУЧНИЙ/QR МІСТОК)
-function scanOfflineLink() {
-    let rawToken = prompt("Вставте скопійований ключ або токен підключення від іншого пристрою:");
-    if (!rawToken) return;
-    try {
-        let parsedDesc = JSON.parse(atob(rawToken));
-        localPeerConnection.setRemoteDescription(new RTCSessionDescription(parsedDesc)).then(() => {
-            if (parsedDesc.type === "offer") {
-                localPeerConnection.createAnswer().then(a => {
-                    localPeerConnection.setLocalDescription(a);
-                    alert("Ланк створено! Покажіть у відповідь згенерований токен вашому напарнику.");
-                });
-            }
-        });
-    } catch (e) { alert("Невірний код ланки."); }
-}
+// ОБРОБКА ДАНИХ СУСІДА
+function processIncomingPacket(packet) {
+    if (!packet.sender) return;
 
-function processIncomingMeshPacket(packet) {
-    if (receivedPacketsLog.has(packet.packet_id)) return;
-    receivedPacketsLog.add(packet.packet_id);
-    packet.ttl -= 1;
-
-    let myCallsign = document.getElementById('my-callsign').value.trim() || "Боєць";
-
-    if (packet.sender && packet.sender !== myCallsign) {
-        activeGroupPeers[packet.sender] = {
-            coords: packet.coords, lastSeen: Date.now(), route: packet.ttl === 4 ? "прямий" : `міст`
-        };
-        updatePeersUIList(); 
-        if (packet.coords) updatePeerMarkerOnMap(packet.sender, packet.coords); 
-    }
-
-    if (packet.type === "TEXT" && (packet.receiver === "ALL" || packet.receiver === myCallsign)) {
-        displayIncomingMessage(packet, packet.receiver === myCallsign);
-    }
-
-    if (packet.ttl > 0 && meshChannel && meshChannel.readyState === "open") {
-        meshChannel.send(JSON.stringify(packet));
-    }
-}
-
-function updatePeerMarkerOnMap(callsign, coords) {
-    if (!map || typeof L === 'undefined') return;
-    if (peerMarkersOnMap[callsign]) {
-        peerMarkersOnMap[callsign].setLatLng([coords.lat, coords.lon]);
-    } else {
-        peerMarkersOnMap[callsign] = L.marker([coords.lat, coords.lon], {
-            icon: L.divIcon({ className: 'peer-tactical-icon', html: `<div class="peer-marker-label">🟢 ${callsign}</div>`, iconAnchor: [30, 0] })
-        }).addTo(map);
-    }
-}
-
-function updatePeersDistances() {
-    if (!lastGoodGPS || typeof L === 'undefined') return;
-    for (let callsign in activeGroupPeers) {
-        let peer = activeGroupPeers[callsign];
-        if (peer.coords) {
-            peer.distance = Math.round(L.latLng(lastGoodGPS.lat, lastGoodGPS.lon).distanceTo(L.latLng(peer.coords.lat, peer.coords.lon)));
-        }
-    }
+    // Фіксуємо напарника в списку
+    activeGroupPeers[packet.sender] = {
+        coords: packet.coords,
+        lastSeen: Date.now()
+    };
     updatePeersUIList();
+
+    // Якщо прийшов текст — виводимо в чат
+    if (packet.type === "TEXT" && packet.payload) {
+        displayIncomingMessage(packet);
+    }
 }
 
 function updatePeersUIList() {
     const listZone = document.getElementById('peers-zone');
     if (!listZone) return;
-    let peersArray = [];
-    for (let name in activeGroupPeers) {
-        if (Date.now() - activeGroupPeers[name].lastSeen > 60000) continue;
-        peersArray.push({ name: name, ...activeGroupPeers[name] });
+    
+    let names = Object.keys(activeGroupPeers);
+    if (names.length === 0) {
+        listZone.innerHTML = `📡 Пошук радіосигналу...`;
+        return;
     }
-    if (peersArray.length === 0) { listZone.innerHTML = `📡 Пошук радіосигналу...`; return; }
+
     listZone.innerHTML = "";
-    peersArray.forEach(peer => {
+    names.forEach(name => {
         let div = document.createElement('div');
         div.className = "peer-item";
-        div.innerHTML = `<span>🟢 <b>${peer.name}</b></span> <span style="color:#0cf; font-weight:bold;">${peer.distance || 0} м</span>`;
+        div.innerHTML = `<span>🟢 <b>${name}</b></span> <span style="color:#0cf; font-weight:bold;">в ефірі</span>`;
         listZone.appendChild(div);
+        
+        // Рухаємо його маркер на мапі
+        let peer = activeGroupPeers[name];
+        if (peer.coords && map) {
+            if (peerMarkersOnMap[name]) {
+                peerMarkersOnMap[name].setLatLng([peer.coords.lat, peer.coords.lon]);
+            } else {
+                peerMarkersOnMap[name] = L.marker([peer.coords.lat, peer.coords.lon], {
+                    icon: L.divIcon({ className: 'peer-tactical-icon', html: `<div class="peer-marker-label">🟢 ${name}</div>` })
+                }).addTo(map);
+            }
+        }
     });
 }
 
+// ВІДПРАВКА В ЛОКАЛЬНИЙ ЕФІР
 window.sendMeshMessage = function() {
     const input = document.getElementById('msg-input');
     const chatBox = document.getElementById('chat-box');
@@ -208,24 +145,36 @@ window.sendMeshMessage = function() {
     let myCallsign = document.getElementById('my-callsign').value.trim() || "Боєць";
     if (!text) return;
 
-    let packetId = "id_" + Math.random().toString(36).substr(2, 9);
     let packet = {
-        "packet_id": packetId, "sender": myCallsign, "receiver": currentChatTarget,
-        "type": "TEXT", "payload": text, "timestamp": Math.floor(Date.now() / 1000), "ttl": 5,
+        "sender": myCallsign,
+        "type": "TEXT",
+        "payload": text,
         "coords": lastGoodGPS ? { lat: lastGoodGPS.lat, lon: lastGoodGPS.lon } : null
     };
 
+    // Відображаємо у себе на екрані
     let msgDiv = document.createElement('div');
     msgDiv.style.color = "#ffffff"; 
     msgDiv.innerText = `Я: ${text}`;
     chatBox.appendChild(msgDiv);
     chatBox.scrollTop = chatBox.scrollHeight;
 
-    if (meshChannel && meshChannel.readyState === "open") meshChannel.send(JSON.stringify(packet));
+    // Стріляємо пакетом по всіх можливих локальних IP-адресах у Wi-Fi мережі
+    LOCAL_IP_TARGETS.forEach(ip => {
+        try {
+            // Використовуємо стандартний фоновий запит без блокувань
+            fetch(`http://${ip}:8080`, {
+                method: 'POST',
+                mode: 'no-cors',
+                body: JSON.stringify(packet)
+            }).catch(()=>{});
+        } catch (e) {}
+    });
+
     input.value = "";
 };
 
-function displayIncomingMessage(packet, isPrivate) {
+function displayIncomingMessage(packet) {
     const chatBox = document.getElementById('chat-box');
     if (!chatBox) return;
     let msgDiv = document.createElement('div');
@@ -235,24 +184,16 @@ function displayIncomingMessage(packet, isPrivate) {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 
-function sendTacticalPing() {
-    if (meshChannel && meshChannel.readyState === "open" && lastGoodGPS) {
-        let ping = {
-            "packet_id": "p_" + Math.random().toString(36).substr(2, 9), "sender": document.getElementById('my-callsign').value,
-            "receiver": "ALL", "type": "GPS", "payload": "PING", "timestamp": Math.floor(Date.now() / 1000), "ttl": 5,
-            "coords": { lat: lastGoodGPS.lat, lon: lastGoodGPS.lon }
-        };
-        meshChannel.send(JSON.stringify(ping));
-    }
-}
-setInterval(sendTacticalPing, 10000); 
-
 function setupInterfaceEvents() {
     document.getElementById('send-btn').onclick = () => sendMeshMessage();
-    document.getElementById('gen-qr-btn').onclick = () => generateOfflineLink();
-    document.getElementById('scan-qr-btn').onclick = () => scanOfflineLink();
     document.getElementById('reset-chat-btn').onclick = () => {
-        currentChatTarget = "ALL";
-        document.getElementById('chat-target').innerText = "🌍 РЕЖИМ: ЗАГАЛЬНИЙ ЕФІР (ДЛЯ ВСІХ)";
+        // Простий ручний імпульс координатами в ефір
+        if (lastGoodGPS) {
+            let ping = { "sender": document.getElementById('my-callsign').value, "type": "GPS", "coords": lastGoodGPS };
+            LOCAL_IP_TARGETS.forEach(ip => {
+                fetch(`http://${ip}:8080`, { method: 'POST', mode: 'no-cors', body: JSON.stringify(ping) }).catch(()=>{});
+            });
+            alert("Координати відправлено в ефір!");
+        }
     };
 }
