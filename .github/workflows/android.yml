@@ -1,0 +1,62 @@
+name: Build Tactical Mesh APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: Install Tools and Dependencies
+        run: |
+          npm install
+
+      - name: Run Web Build and Create WWW Folder
+        run: |
+          npm run build
+
+      - name: Initialize Capacitor Project
+        run: |
+          npx cap init "Tactical Mesh" "tactical.mesh.navigator" --web-dir=www
+
+      - name: Create Android Project Structure
+        run: |
+          npx cap add android
+
+      - name: Configure Android Hardware Permissions
+        run: |
+          MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
+          PERMISSIONS="<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" \/><uses-permission android:name=\"android.permission.BLUETOOTH\" \/><uses-permission android:name=\"android.permission.BLUETOOTH_ADMIN\" \/><uses-permission android:name=\"android.permission.BLUETOOTH_CONNECT\" \/><uses-permission android:name=\"android.permission.BLUETOOTH_SCAN\" \/><uses-permission android:name=\"android.permission.BLUETOOTH_ADVERTISE\" \/>"
+          sed -i "s/<manifest[^>]*>/&\n$PERMISSIONS/" $MANIFEST_PATH
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Sync Web Assets to Android Environment
+        run: |
+          npx cap sync android
+
+      - name: Build Official Android APK File
+        run: |
+          cd android && ./gradlew assembleDebug
+
+      - name: Upload Finished APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tactical-mesh-app
+          path: android/app/build/outputs/apk/debug/app-debug.apk
