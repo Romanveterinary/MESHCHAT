@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Підтягуємо всю історію коммітів, щоб Git не ламався на мілких копіях
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -68,7 +70,10 @@ jobs:
 
       - name: Build Official Android APK File
         run: |
-          # Фікс пам'яті: обмежуємо Gradle до 2 ГБ, щоб уникнути зникнення демона (OOM)
+          # Фікс помилки Git 128: Дозволяємо збірщику працювати з автоматичними папками
+          git config --global --add safe.directory '*'
+          
+          # Запуск компіляції з безпечними лімітами пам'яті
           cd android && ./gradlew assembleDebug -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m"
 
       - name: Upload Finished APK Artifact
