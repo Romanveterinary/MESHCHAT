@@ -68,11 +68,11 @@ jobs:
 
       - name: Build Official Android APK File
         run: |
-          cd android && ./gradlew assembleDebug
+          # Фікс пам'яті: обмежуємо Gradle до 2 ГБ, щоб уникнути зникнення демона (OOM)
+          cd android && ./gradlew assembleDebug -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m"
 
       - name: Upload Finished APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: tactical-mesh-app
-          # Використовуємо гнучкий пошук, щоб гарантовано забрати готовий APK
           path: android/**/*.apk
