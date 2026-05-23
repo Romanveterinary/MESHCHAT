@@ -37,13 +37,24 @@ jobs:
 
       - name: Configure Android Hardware and Network Permissions
         run: |
-          # 1. Додаємо нативні дозволи на роботу GPS та Bluetooth в AndroidManifest
+          # 1. Шлях до автоматично згенерованого маніфесту
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-          PERMISSIONS="<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" \/><uses-permission android:name=\"android.permission.BLUETOOTH\" \/><uses-permission android:name=\"android.permission.BLUETOOTH_ADMIN\" \/><uses-permission android:name=\"android.permission.INTERNET\" \/><uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" \/>"
-          sed -i "s/<manifest[^>]*>/&\n$PERMISSIONS/" $MANIFEST_PATH
           
-          # 2. Дозволяємо локальний HTTP трафік без шифрування (Cleartext HTTP)
+          # 2. Повний набір сучасних дозволів для локального пошуку без інтернету (Android 10-14)
+          PERMISSIONS="<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" /><uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" /><uses-permission android:name=\"android.permission.INTERNET\" /><uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" /><uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\" /><uses-permission android:name=\"android.permission.CHANGE_WIFI_STATE\" /><uses-permission android:name=\"android.permission.BLUETOOTH_SCAN\" android:usesPermissionFlags=\"neverForLocation\" /><uses-permission android:name=\"android.permission.BLUETOOTH_CONNECT\" /><uses-permission android:name=\"android.permission.BLUETOOTH_ADVERTISE\" /><uses-permission android:name=\"android.permission.BLUETOOTH\" android:maxSdkVersion=\"30\" /><uses-permission android:name=\"android.permission.BLUETOOTH_ADMIN\" android:maxSdkVersion=\"30\" />"
+          
+          # Впорскуємо дозволи одразу після тегу <manifest>
+          sed -i "s/<manifest[^>]*>/&\\n$PERMISSIONS/" $MANIFEST_PATH
+          
+          # 3. Дозволяємо локальний HTTP трафік (Cleartext) для стабільності сокетів WebView всередині системи
           sed -i 's/<application[^>]*>/& android:usesCleartextTraffic="true"/' $MANIFEST_PATH
+
+      - name: Inject Custom Native Mesh Hardware Code
+        run: |
+          # Копіюємо наш бойовий Java-файл з кореня репозиторію поверх згенерованого дефолтного
+          TARGET_JAVA_PATH="android/app/src/main/java/tactical/mesh/navigator/MainActivity.java"
+          cp MainActivity.java.override $TARGET_JAVA_PATH
+          echo "Бойовий нативний Java-міст успішно інтегровано в структуру проєкту."
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
