@@ -27,11 +27,19 @@ jobs:
         run: |
           npm run build
 
-      - name: Create Android Project Structure (If missing)
+      - name: Create Android Project Structure Safely
         run: |
-          # Якщо папки android немає, додаємо її, якщо є — йдемо далі
-          if [ ! -d "android" ]; then
-            npx cap add android
+          # Фікс блокування: якщо конфіг існує, тимчасово ховаємо його, щоб CLI не панікував
+          if [ -f "capacitor.config.json" ]; then
+            mv capacitor.config.json capacitor.config.json.bak
+          fi
+          
+          # Створюємо чисту нативну структуру Android
+          npx cap add android
+          
+          # Повертаємо ваш оригінальний бойовий конфіг на місце
+          if [ -f "capacitor.config.json.bak" ]; then
+            mv capacitor.config.json.bak capacitor.config.json
           fi
 
       - name: Configure Android Hardware and Network Permissions
