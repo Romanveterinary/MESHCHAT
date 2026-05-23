@@ -74,4 +74,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tactical-mesh-app
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          # Використовуємо гнучкий пошук, щоб гарантовано забрати готовий APK
+          path: android/**/*.apk
