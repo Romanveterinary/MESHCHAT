@@ -51,9 +51,9 @@ jobs:
 
       - name: Inject Custom Native Mesh Hardware Code
         run: |
-          # Підставляємо наш бойовий Java-код сокетів замість стандартного порожнього
+          # Вказуємо точний шлях копіювання файлу, враховуючи вашу структуру папок
           TARGET_JAVA_PATH="android/app/src/main/java/tactical/mesh/navigator/MainActivity.java"
-          cp MainActivity.java.override $TARGET_JAVA_PATH
+          cp .github/workflows/MainActivity.java.override $TARGET_JAVA_PATH
           echo "Нативний міст для радіомодулів успішно інтегровано в збірку."
 
       - name: Set up JDK 17
