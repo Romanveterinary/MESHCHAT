@@ -37,11 +37,11 @@ public class MainActivity extends BridgeActivity {
             String mode = call.getString("mode");
             String data = call.getString("data");
 
+            // На цьому кроці фокусуємося на Wi-Fi Direct
             if ("wifi".equalsIgnoreCase(mode) || mode == null) {
                 sendTcpDataOverWifi(data);
                 call.resolve();
             } else {
-                // Заглушка для Bluetooth на наступний крок
                 call.resolve();
             }
         }
@@ -52,6 +52,7 @@ public class MainActivity extends BridgeActivity {
             initWifiDirectMesh();
         }
 
+        // Автоматичний підйом незалежної P2P групи без участі роутерів
         private void initWifiDirectMesh() {
             Context ctx = getContext();
             if (ctx == null) return;
@@ -86,6 +87,7 @@ public class MainActivity extends BridgeActivity {
             }
         }
 
+        // Фоновий сервер для прийому пакетів «чистим текстом»
         private void startLocalTcpServer() {
             if (isServerRunning) return;
             isServerRunning = true;
@@ -116,6 +118,7 @@ public class MainActivity extends BridgeActivity {
             }).start();
         }
 
+        // Відправка сформованого JSON-рядка безпосередньо на IP-адресу напарника
         private void sendTcpDataOverWifi(final String jsonPacket) {
             if (targetPeerIp == null) {
                 targetPeerIp = "192.168.43.1"; 
@@ -133,6 +136,7 @@ public class MainActivity extends BridgeActivity {
             }).start();
         }
 
+        // Передача отриманих байтів назад у ваш Web-UI (app.js)
         private void sendDataToJavaScript(String rawJson) {
             getActivity().runOnUiThread(() -> {
                 com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
