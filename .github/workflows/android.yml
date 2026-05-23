@@ -29,7 +29,6 @@ jobs:
 
       - name: Generate Missing Capacitor Config
         run: |
-          # Створюємо базовий конфіг, щоб Capacitor знав, де лежить веб-частина і який ID додатка
           echo '{
             "appId": "tactical.mesh.navigator",
             "appName": "Tactical Mesh",
@@ -38,14 +37,41 @@ jobs:
           }' > capacitor.config.json
           echo "Конфігураційний файл успішно згенеровано."
 
-      - name: Configure Android Hardware and Network Permissions
+      - name: Configure Android Hardware and Network Permissions via Node.js
         run: |
-          MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-          PERMISSIONS="<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" /><uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" /><uses-permission android:name=\"android.permission.INTERNET\" /><uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" /><uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\" /><uses-permission android:name=\"android.permission.CHANGE_WIFI_STATE\" /><uses-permission android:name=\"android.permission.BLUETOOTH_SCAN\" android:usesPermissionFlags=\"neverForLocation\" /><uses-permission android:name=\"android.permission.BLUETOOTH_CONNECT\" /><uses-permission android:name=\"android.permission.BLUETOOTH_ADVERTISE\" /><uses-permission android:name=\"android.permission.BLUETOOTH\" android:maxSdkVersion=\"30\" /><uses-permission android:name=\"android.permission.BLUETOOTH_ADMIN\" android:maxSdkVersion=\"30\" />"
+          node -e '
+          const fs = require("fs");
+          const path = "android/app/src/main/AndroidManifest.xml";
+          if (!fs.existsSync(path)) {
+              console.error("Маніфест не знайдено!");
+              process.exit(1);
+          }
+          let content = fs.readFileSync(path, "utf8");
           
-          # Впорскуємо дозволи радіомодулів у готовий маніфест
-          sed -i "s/<manifest[^>]*>/&\\n$PERMISSIONS/" $MANIFEST_PATH
-          sed -i 's/<application[^>]*>/& android:usesCleartextTraffic="true"/' $MANIFEST_PATH
+          // Готуємо блок сучасних дозволів радіомодулів
+          const permissions = `
+          <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+          <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+          <uses-permission android:name="android.permission.INTERNET" />
+          <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+          <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+          <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+          <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+          <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+          <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+          <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+          <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+          `;
+          
+          // Впорскуємо дозволи одразу після тегу <manifest>
+          content = content.replace(/<manifest[^>]*>/, "$&\n" + permissions);
+          
+          // Дозволяємо локальні HTTP/TCP сокети без шифрування (Cleartext)
+          content = content.replace(/<application[^>]*>/, "$& android:usesCleartextTraffic=\"true\"");
+          
+          fs.writeFileSync(path, content, "utf8");
+          console.log("Дозволи та мережеві налаштування успішно інтегровано в маніфест.");
+          '
 
       - name: Inject Custom Native Mesh Hardware Code
         run: |
@@ -65,12 +91,10 @@ jobs:
 
       - name: Build Official Android APK File
         run: |
-          # Стандартна офіційна команда Capacitor CLI для збірки відладочного APK
           npx cap build android --apk
 
       - name: Upload Finished APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: tactical-mesh-app
-          # Capacitor CLI при такій збірці завжди кладе файл за цим дефолтним шляхом:
           path: android/app/build/outputs/apk/debug/app-debug.apk
