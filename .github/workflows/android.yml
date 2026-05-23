@@ -65,8 +65,8 @@ jobs:
 
       - name: Build Official Android APK File
         run: |
-          # Переходимо безпосередньо в корінь згенерованого Android-проєкту та запускаємо збірку з обмеженням пам'яті
-          cd android && ./gradlew :app:assembleDebug -Dorg.gradle.jvmargs="-Xmx2048m"
+          # Запускаємо збірку через корінь папки android, використовуючи універсальну таску assemble
+          cd android && ./gradlew assemble -Dorg.gradle.jvmargs="-Xmx2048m"
 
       - name: Upload Finished APK Artifact
         uses: actions/upload-artifact@v4
