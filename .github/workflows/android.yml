@@ -65,11 +65,11 @@ jobs:
 
       - name: Build Official Android APK File
         run: |
-          cd android && ./gradlew assembleDebug -Dorg.gradle.jvmargs="-Xmx2048m"
+          # Переходимо безпосередньо в корінь згенерованого Android-проєкту та запускаємо збірку з обмеженням пам'яті
+          cd android && ./gradlew :app:assembleDebug -Dorg.gradle.jvmargs="-Xmx2048m"
 
       - name: Upload Finished APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: tactical-mesh-app
-          # Вказуємо прямий, точний шлях до згенерованого файлу
           path: android/app/build/outputs/apk/debug/app-debug.apk
