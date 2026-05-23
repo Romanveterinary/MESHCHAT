@@ -4,81 +4,156 @@ import android.os.Bundle;
 import android.content.Context;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.p2p.WifiP2pConfig;
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothServerSocket;
+import android.net.wifi.p2p.WifiP2pInfo;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
-import java.util.UUID;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.net.ServerSocket;
+import java.net.Socket;
 
 public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        // Реєструємо нативний плагін, вбудований прямо в поточний клас
         registerPlugin(TargetHardwarePlugin.class);
         super.onCreate(savedInstanceState);
     }
 
-    // 📡 ВБУДОВАНИЙ НАВЕДЕНИЙ ПЛАГІН ДЛЯ РОБОТИ З АНТЕНАМИ (WI-FI / BLUETOOTH)
     @CapacitorPlugin(name = "TargetHardware")
     public static class TargetHardwarePlugin extends Plugin {
 
-        private static final UUID MESH_BT_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
-        private BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        private static final int PORT = 8080;
+        private ServerSocket serverSocket;
+        private boolean isRunning = false;
+        private String targetIpAddress = "192.168.43.1"; // Default IP для клієнта (Group Owner)
 
         @PluginMethod
         public void broadcastPacket(PluginCall call) {
-            String mode = call.getString("mode");
-            String data = call.getString("data");
+            String mode = call.getString("mode"); // "wifi" або "bluetooth"
+            String data = call.getString("data"); // Чистий JSON рядок з чату
 
-            if ("BLUETOOTH".equals(mode)) {
-                sendBluetoothBroadcast(data);
+            if ("wifi".equalsIgnoreCase(mode)) {
+                sendWifiData(data);
+                call.resolve();
             } else {
-                sendWifiBroadcast(data);
+                // Залишаємо заглушку для Bluetooth на наступний крок
+                call.resolve();
             }
-            call.resolve();
         }
 
-        private void sendBluetoothBroadcast(final String data) {
-            new Thread(() -> {
-                try {
-                    if (bluetoothAdapter != null && bluetoothAdapter.isEnabled()) {
-                        BluetoothServerSocket serverSocket = bluetoothAdapter.listenUsingInsecureRfcommWithServiceRecord("MeshPort", MESH_BT_UUID);
-                        triggerJSListener(data);
-                        serverSocket.close();
-                    }
-                } catch (Exception e) { e.printStackTrace(); }
-            }).start();
+        // Ініціалізація мережі Wi-Fi Direct та запуск Сервера/Клієнта
+        @Override
+        protected void handleOnStart() {
+            super.handleOnStart();
+            startMeshNetwork();
         }
 
-        private void sendWifiBroadcast(final String data) {
+        private void startMeshNetwork() {
             Context ctx = getContext();
             if (ctx == null) return;
-            
+
             WifiP2pManager manager = (WifiP2pManager) ctx.getSystemService(Context.WIFI_P2P_SERVICE);
             if (manager != null) {
                 WifiP2pManager.Channel channel = manager.initialize(ctx, ctx.getMainLooper(), null);
-                WifiP2pConfig config = new WifiP2pConfig();
-                config.groupOwnerIntent = 15; 
                 
+                // Створюємо автономну P2P групу (один з девайсів автоматично стане власником групи)
                 manager.createGroup(channel, new WifiP2pManager.ActionListener() {
                     @Override
                     public void onSuccess() {
-                        triggerJSListener(data);
+                        // Група створена успішно. Запитуємо інформацію про лінк (хто сервер, яка IP)
+                        manager.requestConnectionInfo(channel, new WifiP2pManager.ConnectionInfoListener() {
+                            @Override
+                            public void onConnectionInfoAvailable(WifiP2pInfo info) {
+                                if (info.groupFormed) {
+                                    if (info.isGroupOwner) {
+                                        // Цей пристрій — Сервер (Group Owner)
+                                        targetIpAddress = null; 
+                                        startTcpServer();
+                                    } else {
+                                        // Цей пристрій — Клієнт. Отримуємо IP-адресу власника групи
+                                        targetIpAddress = info.groupOwnerAddress.getHostAddress();
+                                        startTcpServer(); // Клієнт теж тримає сервер для двостороннього обміну
+                                    }
+                                }
+                            }
+                        });
                     }
+
                     @Override
                     public void onFailure(int reason) {}
                 });
             }
         }
 
-        private void triggerJSListener(String data) {
-            com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
-            ret.put("data", data);
-            notifyListeners("onPacketReceived", ret);
+        // Нативний легкий TCP-сервер, який слухає ефір у фоновому потоці
+        private void startTcpServer() {
+            if (isRunning) return;
+            isRunning = true;
+
+            new Thread(() -> {
+                try {
+                    serverSocket = new ServerSocket(PORT);
+                    while (isRunning) {
+                        Socket socket = serverSocket.accept();
+                        
+                        // Зберігаємо IP пристрою, який до нас звернувся, для оперативної відповіді
+                        String senderIp = socket.getInetAddress().getHostAddress();
+                        if (targetIpAddress == null || !targetIpAddress.equals(senderIp)) {
+                            targetIpAddress = senderIp;
+                        }
+
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                        String incomingLine = reader.readLine(); // Читаємо чистий JSON рядок
+                        
+                        if (incomingLine != null && !incomingLine.trim().isEmpty()) {
+                            triggerJSListener(incomingLine);
+                        }
+                        
+                        socket.close();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }).start();
+        }
+
+        // Функція відправки текстового пакету по сокету прямо на IP напарника
+        private void sendWifiData(final String data) {
+            if (targetIpAddress == null) return; // Якщо напарник ще не підключився
+
+            new Thread(() -> {
+                try {
+                    Socket socket = new Socket(targetIpAddress, PORT);
+                    PrintWriter writer = new PrintWriter(socket.getOutputStream(), true);
+                    writer.println(data); // Відправляємо чистим текстом із символом перенесення рядка
+                    socket.close();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }).start();
+        }
+
+        private void triggerJSListener(String rawJsonData) {
+            getActivity().runOnUiThread(() -> {
+                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                ret.put("data", rawJsonData);
+                notifyListeners("onPacketReceived", ret);
+            });
+        }
+
+        @Override
+        protected void handleOnStop() {
+            super.handleOnStop();
+            isRunning = false;
+            try {
+                if (serverSocket != null) serverSocket.close();
+            } catch (Exception e) { e.printStackTrace(); }
         }
     }
 }
