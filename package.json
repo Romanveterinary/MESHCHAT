@@ -12,5 +12,11 @@
   "devDependencies": {
     "@capacitor/cli": "^5.7.0",
     "@capacitor/android": "^5.7.0"
+  },
+  "cordova": {
+    "preferences": {
+      "KeepRunning": "true",
+      "AllowInlineMediaPlayback": "true"
+    }
   }
 }
