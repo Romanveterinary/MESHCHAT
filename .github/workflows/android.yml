@@ -37,24 +37,24 @@ jobs:
 
       - name: Configure Android Hardware and Network Permissions
         run: |
-          # 1. Шлях до автоматично згенерованого маніфесту
+          # 1. Шлях до автоматично згенерованого маніфесту Android
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
           
-          # 2. Повний набір сучасних дозволів для локального пошуку без інтернету (Android 10-14)
+          # 2. Сучасні дозволи (GPS, Wi-Fi Direct, Bluetooth) для систем Android 10-14
           PERMISSIONS="<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" /><uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" /><uses-permission android:name=\"android.permission.INTERNET\" /><uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" /><uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\" /><uses-permission android:name=\"android.permission.CHANGE_WIFI_STATE\" /><uses-permission android:name=\"android.permission.BLUETOOTH_SCAN\" android:usesPermissionFlags=\"neverForLocation\" /><uses-permission android:name=\"android.permission.BLUETOOTH_CONNECT\" /><uses-permission android:name=\"android.permission.BLUETOOTH_ADVERTISE\" /><uses-permission android:name=\"android.permission.BLUETOOTH\" android:maxSdkVersion=\"30\" /><uses-permission android:name=\"android.permission.BLUETOOTH_ADMIN\" android:maxSdkVersion=\"30\" />"
           
-          # Впорскуємо дозволи одразу після тегу <manifest>
+          # Автоматичне впорскування дозволів у маніфест
           sed -i "s/<manifest[^>]*>/&\\n$PERMISSIONS/" $MANIFEST_PATH
           
-          # 3. Дозволяємо локальний HTTP трафік (Cleartext) для стабільності сокетів WebView всередині системи
+          # 3. Дозволяємо локальний трафік без шифрування (Cleartext) для сокетів
           sed -i 's/<application[^>]*>/& android:usesCleartextTraffic="true"/' $MANIFEST_PATH
 
       - name: Inject Custom Native Mesh Hardware Code
         run: |
-          # Копіюємо наш бойовий Java-файл з кореня репозиторію поверх згенерованого дефолтного
+          # Підставляємо наш бойовий Java-код сокетів замість стандартного порожнього
           TARGET_JAVA_PATH="android/app/src/main/java/tactical/mesh/navigator/MainActivity.java"
           cp MainActivity.java.override $TARGET_JAVA_PATH
-          echo "Бойовий нативний Java-міст успішно інтегровано в структуру проєкту."
+          echo "Нативний міст для радіомодулів успішно інтегровано в збірку."
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
