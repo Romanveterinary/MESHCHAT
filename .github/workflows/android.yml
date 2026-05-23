@@ -13,8 +13,6 @@ jobs:
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Підтягуємо всю історію коммітів, щоб Git не ламався на мілких копіях
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -29,17 +27,16 @@ jobs:
         run: |
           npm run build
 
-      - name: Initialize Capacitor Project
+      - name: Create Android Project Structure (If missing)
         run: |
-          npx cap init "Tactical Mesh" "tactical.mesh.navigator" --web-dir=www
-
-      - name: Create Android Project Structure
-        run: |
-          npx cap add android
+          # Якщо папки android немає, додаємо її, якщо є — йдемо далі
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
 
       - name: Configure Android Hardware and Network Permissions
         run: |
-          # 1. Шлях до автоматично згенерованого маніфесту Android
+          # 1. Шлях до маніфесту Android
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
           
           # 2. Сучасні дозволи (GPS, Wi-Fi Direct, Bluetooth) для систем Android 10-14
@@ -53,7 +50,7 @@ jobs:
 
       - name: Inject Custom Native Mesh Hardware Code
         run: |
-          # Копіюємо один цілісний файл підміни в нативну структуру
+          # Копіюємо файл підміни в нативну структуру
           TARGET_JAVA_PATH="android/app/src/main/java/tactical/mesh/navigator/MainActivity.java"
           cp .github/workflows/MainActivity.java.override $TARGET_JAVA_PATH
           echo "Цілісний нативний міст успішно інтегровано в збірку."
@@ -70,11 +67,7 @@ jobs:
 
       - name: Build Official Android APK File
         run: |
-          # Фікс помилки Git 128: Дозволяємо збірщику працювати з автоматичними папками
-          git config --global --add safe.directory '*'
-          
-          # Запуск компіляції з безпечними лімітами пам'яті
-          cd android && ./gradlew assembleDebug -Dorg.gradle.jvmargs="-Xmx2048m -XX:MaxMetaspaceSize=512m"
+          cd android && ./gradlew assembleDebug -Dorg.gradle.jvmargs="-Xmx2048m"
 
       - name: Upload Finished APK Artifact
         uses: actions/upload-artifact@v4
