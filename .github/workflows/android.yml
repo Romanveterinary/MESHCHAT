@@ -27,23 +27,23 @@ jobs:
         run: |
           npm run build
 
-      - name: Create Android Project Structure Safely
+      - name: Generate Missing Capacitor Config
         run: |
-          if [ -f "capacitor.config.json" ]; then
-            mv capacitor.config.json capacitor.config.json.bak
-          fi
-          
-          npx cap add android
-          
-          if [ -f "capacitor.config.json.bak" ]; then
-            mv capacitor.config.json.bak capacitor.config.json
-          fi
+          # Створюємо базовий конфіг, щоб Capacitor знав, де лежить веб-частина і який ID додатка
+          echo '{
+            "appId": "tactical.mesh.navigator",
+            "appName": "Tactical Mesh",
+            "webDir": "www",
+            "server": { "androidScheme": "https" }
+          }' > capacitor.config.json
+          echo "Конфігураційний файл успішно згенеровано."
 
       - name: Configure Android Hardware and Network Permissions
         run: |
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
           PERMISSIONS="<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" /><uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" /><uses-permission android:name=\"android.permission.INTERNET\" /><uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" /><uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\" /><uses-permission android:name=\"android.permission.CHANGE_WIFI_STATE\" /><uses-permission android:name=\"android.permission.BLUETOOTH_SCAN\" android:usesPermissionFlags=\"neverForLocation\" /><uses-permission android:name=\"android.permission.BLUETOOTH_CONNECT\" /><uses-permission android:name=\"android.permission.BLUETOOTH_ADVERTISE\" /><uses-permission android:name=\"android.permission.BLUETOOTH\" android:maxSdkVersion=\"30\" /><uses-permission android:name=\"android.permission.BLUETOOTH_ADMIN\" android:maxSdkVersion=\"30\" />"
           
+          # Впорскуємо дозволи радіомодулів у готовий маніфест
           sed -i "s/<manifest[^>]*>/&\\n$PERMISSIONS/" $MANIFEST_PATH
           sed -i 's/<application[^>]*>/& android:usesCleartextTraffic="true"/' $MANIFEST_PATH
 
@@ -65,11 +65,12 @@ jobs:
 
       - name: Build Official Android APK File
         run: |
-          # Виклик конкретної таски модуля додатка з обмеженням пам'яті
-          cd android && ./gradlew :app:assemble -Dorg.gradle.jvmargs="-Xmx2048m"
+          # Стандартна офіційна команда Capacitor CLI для збірки відладочного APK
+          npx cap build android --apk
 
       - name: Upload Finished APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: tactical-mesh-app
+          # Capacitor CLI при такій збірці завжди кладе файл за цим дефолтним шляхом:
           path: android/app/build/outputs/apk/debug/app-debug.apk
