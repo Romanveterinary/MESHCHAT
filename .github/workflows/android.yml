@@ -29,36 +29,26 @@ jobs:
 
       - name: Create Android Project Structure Safely
         run: |
-          # Фікс блокування: якщо конфіг існує, тимчасово ховаємо його, щоб CLI не панікував
           if [ -f "capacitor.config.json" ]; then
             mv capacitor.config.json capacitor.config.json.bak
           fi
           
-          # Створюємо чисту нативну структуру Android
           npx cap add android
           
-          # Повертаємо ваш оригінальний бойовий конфіг на місце
           if [ -f "capacitor.config.json.bak" ]; then
             mv capacitor.config.json.bak capacitor.config.json
           fi
 
       - name: Configure Android Hardware and Network Permissions
         run: |
-          # 1. Шлях до маніфесту Android
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
-          
-          # 2. Сучасні дозволи (GPS, Wi-Fi Direct, Bluetooth) для систем Android 10-14
           PERMISSIONS="<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" /><uses-permission android:name=\"android.permission.ACCESS_COARSE_LOCATION\" /><uses-permission android:name=\"android.permission.INTERNET\" /><uses-permission android:name=\"android.permission.ACCESS_NETWORK_STATE\" /><uses-permission android:name=\"android.permission.ACCESS_WIFI_STATE\" /><uses-permission android:name=\"android.permission.CHANGE_WIFI_STATE\" /><uses-permission android:name=\"android.permission.BLUETOOTH_SCAN\" android:usesPermissionFlags=\"neverForLocation\" /><uses-permission android:name=\"android.permission.BLUETOOTH_CONNECT\" /><uses-permission android:name=\"android.permission.BLUETOOTH_ADVERTISE\" /><uses-permission android:name=\"android.permission.BLUETOOTH\" android:maxSdkVersion=\"30\" /><uses-permission android:name=\"android.permission.BLUETOOTH_ADMIN\" android:maxSdkVersion=\"30\" />"
           
-          # Автоматичне впорскування дозволів у маніфест
           sed -i "s/<manifest[^>]*>/&\\n$PERMISSIONS/" $MANIFEST_PATH
-          
-          # 3. Дозволяємо локальний трафік без шифрування (Cleartext) для сокетів
           sed -i 's/<application[^>]*>/& android:usesCleartextTraffic="true"/' $MANIFEST_PATH
 
       - name: Inject Custom Native Mesh Hardware Code
         run: |
-          # Копіюємо файл підміни в нативну структуру
           TARGET_JAVA_PATH="android/app/src/main/java/tactical/mesh/navigator/MainActivity.java"
           cp .github/workflows/MainActivity.java.override $TARGET_JAVA_PATH
           echo "Цілісний нативний міст успішно інтегровано в збірку."
@@ -81,4 +71,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tactical-mesh-app
-          path: android/**/*.apk
+          # Вказуємо прямий, точний шлях до згенерованого файлу
+          path: android/app/build/outputs/apk/debug/app-debug.apk
