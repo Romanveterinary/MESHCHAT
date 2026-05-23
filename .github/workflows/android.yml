@@ -51,13 +51,10 @@ jobs:
 
       - name: Inject Custom Native Mesh Hardware Code
         run: |
-          # Копіюємо обидва файли (MainActivity та окремий файл плагіна) у нативну структуру
-          TARGET_DIR="android/app/src/main/java/tactical/mesh/navigator"
-          
-          cp .github/workflows/MainActivity.java.override $TARGET_DIR/MainActivity.java
-          cp .github/workflows/TargetHardwarePlugin.java $TARGET_DIR/TargetHardwarePlugin.java
-          
-          echo "Нативний міст та плагін радіомодулів успішно інтегровано в збірку."
+          # Копіюємо один цілісний файл підміни в нативну структуру
+          TARGET_JAVA_PATH="android/app/src/main/java/tactical/mesh/navigator/MainActivity.java"
+          cp .github/workflows/MainActivity.java.override $TARGET_JAVA_PATH
+          echo "Цілісний нативний міст успішно інтегровано в збірку."
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
