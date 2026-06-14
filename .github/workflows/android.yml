@@ -37,6 +37,12 @@ jobs:
           }' > capacitor.config.json
           echo "Конфігураційний файл успішно згенеровано."
 
+      # НОВИЙ КРОК: Створюємо Android-структуру перед редагуванням
+      - name: Add Android Platform
+        run: |
+          npm install @capacitor/android
+          npx cap add android
+
       - name: Configure Android Hardware and Network Permissions via Node.js
         run: |
           node -e '
@@ -48,7 +54,6 @@ jobs:
           }
           let content = fs.readFileSync(path, "utf8");
           
-          // Готуємо блок сучасних дозволів радіомодулів
           const permissions = `
           <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
           <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -63,10 +68,7 @@ jobs:
           <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
           `;
           
-          // Впорскуємо дозволи одразу після тегу <manifest>
           content = content.replace(/<manifest[^>]*>/, "$&\n" + permissions);
-          
-          // Дозволяємо локальні HTTP/TCP сокети без шифрування (Cleartext)
           content = content.replace(/<application[^>]*>/, "$& android:usesCleartextTraffic=\"true\"");
           
           fs.writeFileSync(path, content, "utf8");
@@ -89,9 +91,11 @@ jobs:
         run: |
           npx cap sync android
 
+      # Оновлений, більш надійний метод збірки APK
       - name: Build Official Android APK File
         run: |
-          npx cap build android --apk
+          cd android
+          ./gradlew assembleDebug
 
       - name: Upload Finished APK Artifact
         uses: actions/upload-artifact@v4
