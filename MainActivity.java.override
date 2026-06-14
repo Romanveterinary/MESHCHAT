@@ -2,15 +2,19 @@ package tactical.mesh.navigator;
 
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothServerSocket;
 import android.bluetooth.BluetoothSocket;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.wifi.p2p.WifiP2pManager;
-import android.net.wifi.p2p.WifiP2pInfo;
 import android.os.Bundle;
 import android.util.Log;
 
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -35,20 +39,36 @@ public class MainActivity extends BridgeActivity {
     @CapacitorPlugin(name = "TargetHardware")
     public static class TargetHardwarePlugin extends Plugin {
 
-        // --- ЗМІННІ ДЛЯ WIFI ---
         private static final int TCP_PORT = 8080;
         private ServerSocket wifiServerSocket;
         private boolean isWifiServerRunning = false;
-        // Тепер зберігаємо список усіх IP-адрес напарників, а не одну!
         private CopyOnWriteArrayList<String> connectedWifiPeers = new CopyOnWriteArrayList<>();
 
-        // --- ЗМІННІ ДЛЯ BLUETOOTH ---
         private BluetoothAdapter bluetoothAdapter;
         private BluetoothServerSocket btServerSocket;
         private boolean isBtServerRunning = false;
-        // Стандартний UUID для чатів (Serial Port Profile)
         private static final UUID BT_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
         private CopyOnWriteArrayList<BluetoothSocket> connectedBtSockets = new CopyOnWriteArrayList<>();
+
+        // СЛУХАЧ РАДІОЕФІРУ BLUETOOTH
+        private final BroadcastReceiver btReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String action = intent.getAction();
+                if (BluetoothDevice.ACTION_FOUND.equals(action)) {
+                    BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                    if (device != null) {
+                        @SuppressLint("MissingPermission") String name = device.getName();
+                        String mac = device.getAddress();
+                        
+                        JSObject ret = new JSObject();
+                        ret.put("name", name != null ? name : "Невідомий пристрій");
+                        ret.put("mac", mac);
+                        notifyListeners("onBluetoothDeviceFound", ret); // Передаємо в JS
+                    }
+                }
+            }
+        };
 
         @PluginMethod
         public void broadcastPacket(PluginCall call) {
@@ -58,9 +78,56 @@ public class MainActivity extends BridgeActivity {
             if ("BLUETOOTH".equalsIgnoreCase(mode)) {
                 sendDataOverBluetooth(data);
             } else {
-                // За замовчуванням (або WIFI)
                 sendDataOverWifi(data);
             }
+            call.resolve();
+        }
+
+        // КОМАНДА ЗАПУСКУ СКАНУВАННЯ
+        @SuppressLint("MissingPermission")
+        @PluginMethod
+        public void scanBluetooth(PluginCall call) {
+            if (bluetoothAdapter != null && bluetoothAdapter.isEnabled()) {
+                if (bluetoothAdapter.isDiscovering()) {
+                    bluetoothAdapter.cancelDiscovery();
+                }
+                bluetoothAdapter.startDiscovery();
+                call.resolve();
+            } else {
+                call.reject("Bluetooth вимкнений");
+            }
+        }
+
+        // КОМАНДА ПІДКЛЮЧЕННЯ ДО ПРИСТРОЮ
+        @SuppressLint("MissingPermission")
+        @PluginMethod
+        public void connectToBluetoothDevice(PluginCall call) {
+            String mac = call.getString("mac");
+            if (mac == null || bluetoothAdapter == null) {
+                call.reject("Помилка MAC-адреси");
+                return;
+            }
+
+            new Thread(() -> {
+                try {
+                    // Зупиняємо пошук перед підключенням (важливо для стабільності!)
+                    bluetoothAdapter.cancelDiscovery();
+                    
+                    BluetoothDevice device = bluetoothAdapter.getRemoteDevice(mac);
+                    BluetoothSocket socket = device.createRfcommSocketToServiceRecord(BT_UUID);
+                    socket.connect();
+                    
+                    connectedBtSockets.add(socket);
+                    listenToBluetoothSocket(socket); // Починаємо слухати повідомлення
+                    
+                    JSObject ret = new JSObject();
+                    ret.put("mac", mac);
+                    notifyListeners("onBluetoothConnected", ret);
+                    
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }).start();
             call.resolve();
         }
 
@@ -69,36 +136,41 @@ public class MainActivity extends BridgeActivity {
             super.handleOnStart();
             initWifiDirectMesh();
             initBluetoothServer();
+            
+            // Реєструємо слухача в системі
+            IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
+            getContext().registerReceiver(btReceiver, filter);
         }
 
-        // ==========================================
-        // БЛОК BLUETOOTH
-        // ==========================================
-        @SuppressLint("MissingPermission") // Дозволи вже вказані в маніфесті
+        @Override
+        protected void handleOnStop() {
+            super.handleOnStop();
+            getContext().unregisterReceiver(btReceiver); // Обов'язково відключаємо слухача при виході
+            isWifiServerRunning = false;
+            isBtServerRunning = false;
+            try { if (wifiServerSocket != null) wifiServerSocket.close(); } catch (Exception e) {}
+            try { if (btServerSocket != null) btServerSocket.close(); } catch (Exception e) {}
+        }
+
+        // --- Ініціалізація серверів ---
+        @SuppressLint("MissingPermission")
         private void initBluetoothServer() {
             bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-            if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
-                Log.e("MESH", "Bluetooth не підтримується або вимкнений");
-                return;
-            }
-
+            if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) return;
             if (isBtServerRunning) return;
             isBtServerRunning = true;
 
             new Thread(() -> {
                 try {
-                    // Створюємо сервер, який слухає вхідні Bluetooth-з'єднання
                     btServerSocket = bluetoothAdapter.listenUsingRfcommWithServiceRecord("MeshChat", BT_UUID);
                     while (isBtServerRunning) {
-                        BluetoothSocket socket = btServerSocket.accept(); // Чекаємо підключення
+                        BluetoothSocket socket = btServerSocket.accept();
                         if (socket != null) {
-                            connectedBtSockets.add(socket); // Додаємо напарника в список
-                            listenToBluetoothSocket(socket); // Починаємо слухати його повідомлення
+                            connectedBtSockets.add(socket);
+                            listenToBluetoothSocket(socket);
                         }
                     }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+                } catch (Exception e) { e.printStackTrace(); }
             }).start();
         }
 
@@ -108,11 +180,9 @@ public class MainActivity extends BridgeActivity {
                     BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                     String line;
                     while ((line = reader.readLine()) != null) {
-                        sendDataToJavaScript(line); // Передаємо отриманий текст у веб-інтерфейс
+                        sendDataToJavaScript(line);
                     }
-                } catch (Exception e) {
-                    connectedBtSockets.remove(socket); // Якщо зв'язок обірвався, видаляємо
-                }
+                } catch (Exception e) { connectedBtSockets.remove(socket); }
             }).start();
         }
 
@@ -121,30 +191,24 @@ public class MainActivity extends BridgeActivity {
                 try {
                     PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
                     out.println(jsonPacket);
-                } catch (Exception e) {
-                    connectedBtSockets.remove(socket);
-                }
+                } catch (Exception e) { connectedBtSockets.remove(socket); }
             }
         }
 
-        // ==========================================
-        // БЛОК WIFI DIRECT (ВИПРАВЛЕНО)
-        // ==========================================
+        // Логіка Wi-Fi залишається як у попередньому кроці (виправлена версія зі списками)
         private void initWifiDirectMesh() {
             Context ctx = getContext();
             if (ctx == null) return;
-
             final WifiP2pManager manager = (WifiP2pManager) ctx.getSystemService(Context.WIFI_P2P_SERVICE);
             if (manager != null) {
                 final WifiP2pManager.Channel channel = manager.initialize(ctx, ctx.getMainLooper(), null);
-                @SuppressLint("MissingPermission") 
+                @SuppressLint("MissingPermission")
                 Runnable createGroup = () -> manager.createGroup(channel, new WifiP2pManager.ActionListener() {
                     @Override
                     public void onSuccess() {
                         manager.requestConnectionInfo(channel, info -> {
                             if (info.groupFormed) {
                                 if (!info.isGroupOwner) {
-                                    // Якщо ми клієнт, запам'ятовуємо IP власника групи
                                     String goIp = info.groupOwnerAddress.getHostAddress();
                                     if (!connectedWifiPeers.contains(goIp)) connectedWifiPeers.add(goIp);
                                 }
@@ -152,10 +216,7 @@ public class MainActivity extends BridgeActivity {
                             }
                         });
                     }
-                    @Override
-                    public void onFailure(int reason) {
-                        startLocalTcpServer();
-                    }
+                    @Override public void onFailure(int reason) { startLocalTcpServer(); }
                 });
                 createGroup.run();
             }
@@ -164,22 +225,16 @@ public class MainActivity extends BridgeActivity {
         private void startLocalTcpServer() {
             if (isWifiServerRunning) return;
             isWifiServerRunning = true;
-
             new Thread(() -> {
                 try {
                     wifiServerSocket = new ServerSocket(TCP_PORT);
                     while (isWifiServerRunning) {
                         Socket clientSocket = wifiServerSocket.accept();
                         String senderIp = clientSocket.getInetAddress().getHostAddress();
-                        
-                        // Зберігаємо IP ВСІХ, хто підключається, щоб зробити розсилку
-                        if (!connectedWifiPeers.contains(senderIp)) {
-                            connectedWifiPeers.add(senderIp);
-                        }
+                        if (!connectedWifiPeers.contains(senderIp)) connectedWifiPeers.add(senderIp);
 
                         BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
                         String rawLine = reader.readLine();
-                        
                         if (rawLine != null && !rawLine.trim().isEmpty()) {
                             sendDataToJavaScript(rawLine);
                         }
@@ -190,7 +245,6 @@ public class MainActivity extends BridgeActivity {
         }
 
         private void sendDataOverWifi(final String jsonPacket) {
-            // Відправляємо пакет ВСІМ відомим пристроям у мережі
             for (String ip : connectedWifiPeers) {
                 new Thread(() -> {
                     try {
@@ -203,24 +257,12 @@ public class MainActivity extends BridgeActivity {
             }
         }
 
-        // ==========================================
-        // ЗАГАЛЬНЕ (ПЕРЕДАЧА В JS)
-        // ==========================================
         private void sendDataToJavaScript(String rawJson) {
             getActivity().runOnUiThread(() -> {
-                com.getcapacitor.JSObject ret = new com.getcapacitor.JSObject();
+                JSObject ret = new JSObject();
                 ret.put("data", rawJson);
                 notifyListeners("onPacketReceived", ret);
             });
-        }
-
-        @Override
-        protected void handleOnStop() {
-            super.handleOnStop();
-            isWifiServerRunning = false;
-            isBtServerRunning = false;
-            try { if (wifiServerSocket != null) wifiServerSocket.close(); } catch (Exception e) {}
-            try { if (btServerSocket != null) btServerSocket.close(); } catch (Exception e) {}
         }
     }
 }
