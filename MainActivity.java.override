@@ -38,7 +38,7 @@ public class MainActivity extends BridgeActivity {
     @CapacitorPlugin(name = "TargetHardware")
     public static class TargetHardwarePlugin extends Plugin {
 
-        // --- ЗМІННІ ДЛЯ WIFI (ТЕПЕР UDP BROADCAST) ---
+        // --- ЗМІННІ ДЛЯ WIFI (UDP BROADCAST) ---
         private static final int NETWORK_PORT = 8080;
         private DatagramSocket udpSocket;
         private boolean isUdpServerRunning = false;
@@ -78,7 +78,6 @@ public class MainActivity extends BridgeActivity {
             if ("BLUETOOTH".equalsIgnoreCase(mode)) {
                 sendDataOverBluetooth(data);
             } else {
-                // Відправляємо пакети в мережу Точки доступу
                 sendDataOverUdp(data);
             }
             call.resolve();
@@ -126,7 +125,7 @@ public class MainActivity extends BridgeActivity {
         @Override
         protected void handleOnStart() {
             super.handleOnStart();
-            initUdpListener(); // Запускаємо слухача локальної мережі
+            initUdpListener();
             initBluetoothServer();
             
             IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
@@ -152,7 +151,6 @@ public class MainActivity extends BridgeActivity {
 
             new Thread(() -> {
                 try {
-                    // Слухаємо порт 8080 на всій мережі
                     udpSocket = new DatagramSocket(NETWORK_PORT);
                     udpSocket.setBroadcast(true);
                     byte[] buffer = new byte[4096];
@@ -177,8 +175,6 @@ public class MainActivity extends BridgeActivity {
                     socket.setBroadcast(true);
                     byte[] dataBytes = jsonPacket.getBytes();
                     
-                    // Відправляємо крик на універсальну адресу 255.255.255.255
-                    // Його почують усі пристрої в поточній мережі (Точці доступу)
                     InetAddress broadcastAddress = InetAddress.getByName("255.255.255.255");
                     DatagramPacket packet = new DatagramPacket(dataBytes, dataBytes.length, broadcastAddress, NETWORK_PORT);
                     
@@ -224,6 +220,19 @@ public class MainActivity extends BridgeActivity {
             }).start();
         }
 
+        // ВІДНОВЛЕНА ФУНКЦІЯ ВІДПРАВКИ ПО BLUETOOTH
+        private void sendDataOverBluetooth(String jsonPacket) {
+            for (BluetoothSocket socket : connectedBtSockets) {
+                try {
+                    PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+                    out.println(jsonPacket);
+                } catch (Exception e) { connectedBtSockets.remove(socket); }
+            }
+        }
+
+        // ==========================================
+        // ЗАГАЛЬНІ ФУНКЦІЇ
+        // ==========================================
         private void sendDataToJavaScript(String rawJson) {
             getActivity().runOnUiThread(() -> {
                 JSObject ret = new JSObject();
