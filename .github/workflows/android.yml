@@ -37,12 +37,13 @@ jobs:
             "server": { "androidScheme": "https" }
           }' > capacitor.config.json
 
-      # Замість створення з нуля, просто синхронізуємо існуючу папку
-      - name: Sync Android Environment
+      # БРОНЕБІЙНИЙ КРОК: Видаляємо стару/зламану папку і створюємо нову
+      - name: Rebuild Android Environment Safely
         run: |
-          npx cap sync android
+          rm -rf android
+          npx cap add android
 
-      # Тепер маніфест точно на місці, безпечно його редагуємо
+      # Тепер маніфест 100% існує, безпечно редагуємо
       - name: Configure Android Hardware Permissions via Node.js
         run: |
           node -e '
@@ -68,7 +69,6 @@ jobs:
           <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
           `;
           
-          // Захист від подвійного додавання дозволів
           if (!content.includes("BLUETOOTH_CONNECT")) {
               content = content.replace(/<manifest[^>]*>/, "$&\n" + permissions);
           }
@@ -83,7 +83,6 @@ jobs:
       - name: Inject Custom Native Mesh Hardware Code
         run: |
           TARGET_JAVA_PATH="android/app/src/main/java/tactical/mesh/navigator/MainActivity.java"
-          # Розумний пошук файлу override
           if [ -f "MainActivity.java.override" ]; then
             cp MainActivity.java.override $TARGET_JAVA_PATH
           elif [ -f ".github/workflows/MainActivity.java.override" ]; then
