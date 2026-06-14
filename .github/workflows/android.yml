@@ -22,6 +22,7 @@ jobs:
       - name: Install Tools and Dependencies
         run: |
           npm install
+          npm install @capacitor/android
 
       - name: Run Web Build and Create WWW Folder
         run: |
@@ -35,21 +36,20 @@ jobs:
             "webDir": "www",
             "server": { "androidScheme": "https" }
           }' > capacitor.config.json
-          echo "Конфігураційний файл успішно згенеровано."
 
-      # НОВИЙ КРОК: Створюємо Android-структуру перед редагуванням
-      - name: Add Android Platform
+      # Замість створення з нуля, просто синхронізуємо існуючу папку
+      - name: Sync Android Environment
         run: |
-          npm install @capacitor/android
-          npx cap add android
+          npx cap sync android
 
-      - name: Configure Android Hardware and Network Permissions via Node.js
+      # Тепер маніфест точно на місці, безпечно його редагуємо
+      - name: Configure Android Hardware Permissions via Node.js
         run: |
           node -e '
           const fs = require("fs");
           const path = "android/app/src/main/AndroidManifest.xml";
           if (!fs.existsSync(path)) {
-              console.error("Маніфест не знайдено!");
+              console.error("Маніфест не знайдено за шляхом: " + path);
               process.exit(1);
           }
           let content = fs.readFileSync(path, "utf8");
@@ -68,8 +68,13 @@ jobs:
           <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
           `;
           
-          content = content.replace(/<manifest[^>]*>/, "$&\n" + permissions);
-          content = content.replace(/<application[^>]*>/, "$& android:usesCleartextTraffic=\"true\"");
+          // Захист від подвійного додавання дозволів
+          if (!content.includes("BLUETOOTH_CONNECT")) {
+              content = content.replace(/<manifest[^>]*>/, "$&\n" + permissions);
+          }
+          if (!content.includes("usesCleartextTraffic")) {
+              content = content.replace(/<application[^>]*>/, "$& android:usesCleartextTraffic=\"true\"");
+          }
           
           fs.writeFileSync(path, content, "utf8");
           console.log("Дозволи та мережеві налаштування успішно інтегровано в маніфест.");
@@ -78,8 +83,14 @@ jobs:
       - name: Inject Custom Native Mesh Hardware Code
         run: |
           TARGET_JAVA_PATH="android/app/src/main/java/tactical/mesh/navigator/MainActivity.java"
-          cp .github/workflows/MainActivity.java.override $TARGET_JAVA_PATH
-          echo "Цілісний нативний міст успішно інтегровано в збірку."
+          # Розумний пошук файлу override
+          if [ -f "MainActivity.java.override" ]; then
+            cp MainActivity.java.override $TARGET_JAVA_PATH
+          elif [ -f ".github/workflows/MainActivity.java.override" ]; then
+            cp .github/workflows/MainActivity.java.override $TARGET_JAVA_PATH
+          else
+            echo "УВАГА: Не знайдено файл MainActivity.java.override!"
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -87,14 +98,10 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Sync Web Assets to Android Environment
-        run: |
-          npx cap sync android
-
-      # Оновлений, більш надійний метод збірки APK
       - name: Build Official Android APK File
         run: |
           cd android
+          chmod +x gradlew
           ./gradlew assembleDebug
 
       - name: Upload Finished APK Artifact
