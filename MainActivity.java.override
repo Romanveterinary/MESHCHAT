@@ -9,8 +9,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.media.MediaRecorder;
-import android.media.MediaPlayer;
 import android.os.Bundle;
 
 import com.getcapacitor.BridgeActivity;
@@ -20,12 +18,7 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import org.json.JSONObject;
-
 import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.DatagramPacket;
@@ -45,176 +38,140 @@ public class MainActivity extends BridgeActivity {
     @CapacitorPlugin(name = "TargetHardware")
     public static class TargetHardwarePlugin extends Plugin {
 
+        // --- ЗМІННІ ДЛЯ WIFI (UDP BROADCAST) ---
         private static final int NETWORK_PORT = 8080;
         private DatagramSocket udpSocket;
         private boolean isUdpServerRunning = false;
-        
-        // НОВЕ: Список відомих IP-адрес для "Снайперської" відправки
         private CopyOnWriteArrayList<String> knownUdpIps = new CopyOnWriteArrayList<>();
 
+        // --- ЗМІННІ ДЛЯ BLUETOOTH ---
         private BluetoothAdapter bluetoothAdapter;
         private BluetoothServerSocket btServerSocket;
         private boolean isBtServerRunning = false;
         private static final UUID BT_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
         private CopyOnWriteArrayList<BluetoothSocket> connectedBtSockets = new CopyOnWriteArrayList<>();
 
-        // АУДІО МОДУЛІ ДЛЯ РАЦІЇ
-        private MediaRecorder mediaRecorder;
-        private MediaPlayer mediaPlayer;
-        private String audioFilePath;
-
+        // СЛУХАЧ РАДІОЕФІРУ BLUETOOTH
         private final BroadcastReceiver btReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                if (BluetoothDevice.ACTION_FOUND.equals(intent.getAction())) {
+                String action = intent.getAction();
+                if (BluetoothDevice.ACTION_FOUND.equals(action)) {
                     BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                     if (device != null) {
                         @SuppressLint("MissingPermission") String name = device.getName();
+                        String mac = device.getAddress();
+                        
                         JSObject ret = new JSObject();
                         ret.put("name", name != null ? name : "Невідомий пристрій");
-                        ret.put("mac", device.getAddress());
+                        ret.put("mac", mac);
                         notifyListeners("onBluetoothDeviceFound", ret);
                     }
                 }
             }
         };
 
+        @PluginMethod
+        public void broadcastPacket(PluginCall call) {
+            String mode = call.getString("mode");
+            String data = call.getString("data");
+
+            if ("BLUETOOTH".equalsIgnoreCase(mode)) {
+                sendDataOverBluetooth(data);
+            } else {
+                sendDataOverUdp(data);
+            }
+            call.resolve();
+        }
+
+        @SuppressLint("MissingPermission")
+        @PluginMethod
+        public void scanBluetooth(PluginCall call) {
+            if (bluetoothAdapter != null && bluetoothAdapter.isEnabled()) {
+                if (bluetoothAdapter.isDiscovering()) bluetoothAdapter.cancelDiscovery();
+                bluetoothAdapter.startDiscovery();
+                call.resolve();
+            } else {
+                call.reject("Bluetooth вимкнений");
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        @PluginMethod
+        public void connectToBluetoothDevice(PluginCall call) {
+            String mac = call.getString("mac");
+            if (mac == null || bluetoothAdapter == null) {
+                call.reject("Помилка MAC-адреси");
+                return;
+            }
+
+            new Thread(() -> {
+                try {
+                    bluetoothAdapter.cancelDiscovery();
+                    BluetoothDevice device = bluetoothAdapter.getRemoteDevice(mac);
+                    BluetoothSocket socket = device.createRfcommSocketToServiceRecord(BT_UUID);
+                    socket.connect();
+                    
+                    connectedBtSockets.add(socket);
+                    listenToBluetoothSocket(socket);
+                    
+                    JSObject ret = new JSObject();
+                    ret.put("mac", mac);
+                    notifyListeners("onBluetoothConnected", ret);
+                } catch (Exception e) { e.printStackTrace(); }
+            }).start();
+            call.resolve();
+        }
+
         @Override
         protected void handleOnStart() {
             super.handleOnStart();
-            audioFilePath = getContext().getCacheDir().getAbsolutePath() + "/ptt_mesh.3gp";
             initUdpListener();
             initBluetoothServer();
-            getContext().registerReceiver(btReceiver, new IntentFilter(BluetoothDevice.ACTION_FOUND));
-        }
-
-        // ==========================================
-        // БЛОК РАЦІЇ (PTT)
-        // ==========================================
-        @PluginMethod
-        public void startVoiceRecord(PluginCall call) {
-            try {
-                mediaRecorder = new MediaRecorder();
-                mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-                mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP);
-                mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
-                mediaRecorder.setOutputFile(audioFilePath);
-                mediaRecorder.prepare();
-                mediaRecorder.start();
-                call.resolve();
-            } catch (Exception e) {
-                e.printStackTrace();
-                call.reject("Мікрофон недоступний");
-            }
-        }
-
-        @PluginMethod
-        public void stopAndSendVoice(PluginCall call) {
-            String mode = call.getString("mode");
-            String sender = call.getString("sender");
-            String color = call.getString("color");
             
-            try {
-                if (mediaRecorder != null) {
-                    mediaRecorder.stop();
-                    mediaRecorder.release();
-                    mediaRecorder = null;
-                }
-                
-                File file = new File(audioFilePath);
-                byte[] bytes = new byte[(int) file.length()];
-                FileInputStream fis = new FileInputStream(file);
-                fis.read(bytes);
-                fis.close();
-                String base64Audio = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
-                
-                JSONObject json = new JSONObject();
-                json.put("type", "VOICE");
-                json.put("sender", sender);
-                json.put("color", color);
-                json.put("audio", base64Audio);
-                
-                if ("BLUETOOTH".equalsIgnoreCase(mode)) sendDataOverBluetooth(json.toString());
-                else sendDataOverUdp(json.toString());
-                
-                call.resolve();
-            } catch (Exception e) {
-                e.printStackTrace();
-                call.reject("Помилка відправки аудіо");
-            }
+            IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
+            getContext().registerReceiver(btReceiver, filter);
         }
 
-        private void playVoicePacket(String base64Audio) {
-            try {
-                byte[] bytes = android.util.Base64.decode(base64Audio, android.util.Base64.NO_WRAP);
-                File file = new File(getContext().getCacheDir(), "ptt_recv.3gp");
-                FileOutputStream fos = new FileOutputStream(file);
-                fos.write(bytes);
-                fos.close();
-                
-                if (mediaPlayer != null) {
-                    if (mediaPlayer.isPlaying()) mediaPlayer.stop();
-                    mediaPlayer.release();
-                }
-                mediaPlayer = new MediaPlayer();
-                mediaPlayer.setDataSource(file.getAbsolutePath());
-                mediaPlayer.prepare();
-                mediaPlayer.start();
-            } catch (Exception e) { e.printStackTrace(); }
+        @Override
+        protected void handleOnStop() {
+            super.handleOnStop();
+            getContext().unregisterReceiver(btReceiver);
+            isUdpServerRunning = false;
+            isBtServerRunning = false;
+            try { if (udpSocket != null) udpSocket.close(); } catch (Exception e) {}
+            try { if (btServerSocket != null) btServerSocket.close(); } catch (Exception e) {}
         }
 
         // ==========================================
-        // МЕРЕЖА: СЛУХАЧ (ТУТ МИ ЗАХОПЛЮЄМО IP)
+        // БЛОК ЛОКАЛЬНОЇ МЕРЕЖІ (UDP / LAN)
         // ==========================================
-        private void processIncomingPacket(String rawLine) {
-            try {
-                JSONObject json = new JSONObject(rawLine);
-                if ("VOICE".equals(json.optString("type"))) {
-                    playVoicePacket(json.optString("audio")); 
-                    sendDataToJavaScript(rawLine); 
-                } else {
-                    sendDataToJavaScript(rawLine);
-                }
-            } catch (Exception e) { sendDataToJavaScript(rawLine); }
-        }
-
         private void initUdpListener() {
             if (isUdpServerRunning) return;
             isUdpServerRunning = true;
+
             new Thread(() -> {
                 try {
                     udpSocket = new DatagramSocket(NETWORK_PORT);
                     udpSocket.setBroadcast(true);
-                    byte[] buffer = new byte[65000];
+                    byte[] buffer = new byte[4096];
+
                     while (isUdpServerRunning) {
                         DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                         udpSocket.receive(packet);
                         
-                        // СНАЙПЕРСЬКЕ ЗАХОПЛЕННЯ: Запам'ятовуємо IP того, хто нам написав
                         String senderIp = packet.getAddress().getHostAddress();
                         if (senderIp != null && !knownUdpIps.contains(senderIp) && !senderIp.equals("127.0.0.1")) {
                             knownUdpIps.add(senderIp);
                         }
 
                         String rawLine = new String(packet.getData(), 0, packet.getLength());
-                        if (!rawLine.trim().isEmpty()) {
-                            processIncomingPacket(rawLine);
+                        if (rawLine != null && !rawLine.trim().isEmpty()) {
+                            sendDataToJavaScript(rawLine);
                         }
                     }
                 } catch (Exception e) { e.printStackTrace(); }
             }).start();
-        }
-
-        // ==========================================
-        // МЕРЕЖА: ВІДПРАВКА (BROADCAST + UNICAST)
-        // ==========================================
-        @PluginMethod
-        public void broadcastPacket(PluginCall call) {
-            String mode = call.getString("mode");
-            String data = call.getString("data");
-            if ("BLUETOOTH".equalsIgnoreCase(mode)) sendDataOverBluetooth(data);
-            else sendDataOverUdp(data);
-            call.resolve();
         }
 
         private void sendDataOverUdp(final String jsonPacket) {
@@ -222,7 +179,6 @@ public class MainActivity extends BridgeActivity {
                 try {
                     byte[] dataBytes = jsonPacket.getBytes();
                     
-                    // 1. КИЛИМОВЕ БОМБАРДУВАННЯ (Намагаємося пробити фаєрвол Точки доступу)
                     DatagramSocket bSocket = new DatagramSocket();
                     bSocket.setBroadcast(true);
                     try { bSocket.send(new DatagramPacket(dataBytes, dataBytes.length, InetAddress.getByName("255.255.255.255"), NETWORK_PORT)); } catch (Exception e){}
@@ -230,7 +186,6 @@ public class MainActivity extends BridgeActivity {
                     try { bSocket.send(new DatagramPacket(dataBytes, dataBytes.length, InetAddress.getByName("192.168.49.255"), NETWORK_PORT)); } catch (Exception e){}
                     bSocket.close();
 
-                    // 2. СНАЙПЕРСЬКИЙ РЕЖИМ (Прямо по збереженим IP адресам)
                     for (String ip : knownUdpIps) {
                         try {
                             DatagramSocket uSocket = new DatagramSocket();
@@ -243,7 +198,7 @@ public class MainActivity extends BridgeActivity {
         }
 
         // ==========================================
-        // БЛОК BLUETOOTH
+        // БЛОК ВІД СЕРЦЯ BLUETOOTH
         // ==========================================
         @SuppressLint("MissingPermission")
         private void initBluetoothServer() {
@@ -251,6 +206,7 @@ public class MainActivity extends BridgeActivity {
             if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) return;
             if (isBtServerRunning) return;
             isBtServerRunning = true;
+
             new Thread(() -> {
                 try {
                     btServerSocket = bluetoothAdapter.listenUsingRfcommWithServiceRecord("MeshChat", BT_UUID);
@@ -271,7 +227,7 @@ public class MainActivity extends BridgeActivity {
                     BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                     String line;
                     while ((line = reader.readLine()) != null) {
-                        processIncomingPacket(line);
+                        sendDataToJavaScript(line);
                     }
                 } catch (Exception e) { connectedBtSockets.remove(socket); }
             }).start();
@@ -286,50 +242,12 @@ public class MainActivity extends BridgeActivity {
             }
         }
 
-        @SuppressLint("MissingPermission")
-        @PluginMethod public void scanBluetooth(PluginCall call) {
-            if (bluetoothAdapter != null && bluetoothAdapter.isEnabled()) {
-                if (bluetoothAdapter.isDiscovering()) bluetoothAdapter.cancelDiscovery();
-                bluetoothAdapter.startDiscovery();
-                call.resolve();
-            } else call.reject("Bluetooth вимкнений");
-        }
-
-        @SuppressLint("MissingPermission")
-        @PluginMethod public void connectToBluetoothDevice(PluginCall call) {
-            String mac = call.getString("mac");
-            if (mac == null || bluetoothAdapter == null) { call.reject("Помилка"); return; }
-            new Thread(() -> {
-                try {
-                    bluetoothAdapter.cancelDiscovery();
-                    BluetoothSocket socket = bluetoothAdapter.getRemoteDevice(mac).createRfcommSocketToServiceRecord(BT_UUID);
-                    socket.connect();
-                    connectedBtSockets.add(socket);
-                    listenToBluetoothSocket(socket);
-                    JSObject ret = new JSObject(); ret.put("mac", mac);
-                    notifyListeners("onBluetoothConnected", ret);
-                } catch (Exception e) { e.printStackTrace(); }
-            }).start();
-            call.resolve();
-        }
-
         private void sendDataToJavaScript(String rawJson) {
             getActivity().runOnUiThread(() -> {
                 JSObject ret = new JSObject();
                 ret.put("data", rawJson);
                 notifyListeners("onPacketReceived", ret);
             });
-        }
-
-        @Override
-        protected void handleOnStop() {
-            super.handleOnStop();
-            getContext().unregisterReceiver(btReceiver);
-            isUdpServerRunning = false; isBtServerRunning = false;
-            try { if (udpSocket != null) udpSocket.close(); } catch (Exception e) {}
-            try { if (btServerSocket != null) btServerSocket.close(); } catch (Exception e) {}
-            if (mediaPlayer != null) { mediaPlayer.release(); mediaPlayer = null; }
-            if (mediaRecorder != null) { mediaRecorder.release(); mediaRecorder = null; }
         }
     }
 }
