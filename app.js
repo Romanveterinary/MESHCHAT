@@ -7,7 +7,7 @@ let myMarker = null;
 let lastGoodGPS = null;
 
 let activeGroupPeers = {}; 
-let peerMarkersOnMap = {}; // Глобальний об'єкт для маркерів напарників (виправлено помилку)
+let peerMarkersOnMap = {}; // Глобальний об'єкт для маркерів напарників
 
 window.addEventListener('DOMContentLoaded', () => {
     initMap();
@@ -16,6 +16,12 @@ window.addEventListener('DOMContentLoaded', () => {
     setupInterfaceEvents();
     initNativeMeshListener(); // Запуск прослуховування радіоефіру
     startAutomaticGpsPing();   // Запуск фонової розсилки координат кожні 12 секунд
+    
+    // Прив'язка кліку для нової кнопки сканування Bluetooth
+    const scanBtBtn = document.getElementById('scan-bt-btn');
+    if (scanBtBtn) {
+        scanBtBtn.onclick = () => window.startBluetoothScan();
+    }
 });
 
 // Ініціалізація офлайн-сумісної карти Leaflet
@@ -24,13 +30,13 @@ function initMap() {
         map = L.map('map', {
             zoomControl: false,
             attributionControl: false
-        }).setView([49.42, 26.98], 13); // Центр за замовчуванням
+        }).setView([49.42, 26.98], 13); // Центр за замовчуванням (Хмельницький)
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19
         }).addTo(map);
 
-        // Кнопка центрування на собі
+        // Кнопка швидкого центрування мапи на власному маркері
         const zoomBtn = document.createElement('div');
         zoomBtn.style.position = 'absolute';
         zoomBtn.style.bottom = '20px';
@@ -54,7 +60,7 @@ function initMap() {
     }
 }
 
-// Ініціалізація та фонове відстеження GPS
+// Ініціалізація та фонове відстеження GPS координат
 function initGPS() {
     if (!navigator.geolocation) return;
 
@@ -107,7 +113,7 @@ function initCompass() {
     }
 }
 
-// Налаштування кнопок та інтерфейсу
+// Налаштування подій елементів інтерфейсу
 function setupInterfaceEvents() {
     const sendBtn = document.getElementById('send-btn');
     if (sendBtn) {
@@ -155,7 +161,7 @@ window.sendMeshMessage = function() {
     // Відображаємо у власному логу чату відразу
     displayIncomingMessage(packet);
 
-    // Стріляємо в нативний ефір
+    // Стріляємо в нативний апаратний ефір
     broadcastThroughHardware(packet);
 
     msgInput.value = "";
@@ -163,8 +169,9 @@ window.sendMeshMessage = function() {
 
 // Допоміжна функція передачі пакета в Java-шар
 function broadcastThroughHardware(packet) {
-    const hardwareSelector = document.getElementById('hardware-selector');
-    const mode = hardwareSelector ? hardwareSelector.value : "wifi";
+    // ВИПРАВЛЕНО: ID елемента в HTML 'hardware-select' замість 'hardware-selector'
+    const hardwareSelector = document.getElementById('hardware-select');
+    const mode = hardwareSelector ? hardwareSelector.value : "WIFI_DIRECT";
 
     if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.TargetHardware) {
         window.Capacitor.Plugins.TargetHardware.broadcastPacket({
@@ -182,15 +189,15 @@ function startAutomaticGpsPing() {
         const callsign = document.getElementById('my-callsign').value.trim() || "Оператор";
         const pingPacket = {
             sender: callsign,
-            payload: "", // Пустий текст, це службовий пінг координат
+            payload: "", // Порожній текст, це суто службовий пінг
             type: "GPS_PING",
             lat: lastGoodGPS.lat,
             lon: lastGoodGPS.lon
         };
 
-        // Тихо надсилаємо в ефір без виведення у свій лог чату
+        // Передаємо в ефір фоном
         broadcastThroughHardware(pingPacket);
-    }, 12000); // Рівно 12 секунд
+    }, 12000);
 }
 
 // 📡 СЛУХАЧ НАВКОЛИШНЬОГО РАДІОЕФІРУ
@@ -235,7 +242,7 @@ window.updatePeerMarkerOnMap = function(peerName, lat, lon) {
     if (peerMarkersOnMap[peerName]) {
         peerMarkersOnMap[peerName].setLatLng([lat, lon]);
     } else {
-        // Якщо напарник з'явився вперше — створюємо новий маркер із його позивним
+        // Якщо напарник з'явився вперше — створюємо маркер із його позивним
         peerMarkersOnMap[peerName] = L.marker([lat, lon]).addTo(map)
             .bindPopup(`<b>${peerName}</b><br>На зв'язку по Mesh`)
             .openPopup();
@@ -247,3 +254,68 @@ window.updatePeerMarkerOnMap = function(peerName, lat, lon) {
         }
     }
 };
+
+// =========================================================================
+// БЛОК КЕРУВАННЯ АВТОНОМНИМ BLUETOOTH СКАНУВАННЯМ ТА ПІДКЛЮЧЕННЯМ
+// =========================================================================
+
+// Запуск сканування через нативний Java-міст
+window.startBluetoothScan = function() {
+    const btModal = document.getElementById('bt-modal');
+    const btList = document.getElementById('bt-devices-list');
+    
+    btList.innerHTML = '<span style="color:#00ccff; font-size:11px;">📡 Сканування ефіру...</span>';
+    btModal.style.display = 'block';
+
+    if (window.Capacitor && window.Capacitor.Plugins.TargetHardware) {
+        window.Capacitor.Plugins.TargetHardware.scanBluetooth().catch(err => console.error(err));
+    }
+};
+
+// Рендеринг знайденого пристрою у випадаючий список
+window.addBluetoothDeviceToList = function(name, mac) {
+    const btList = document.getElementById('bt-devices-list');
+    
+    if(btList.innerHTML.includes("Сканування")) btList.innerHTML = "";
+    if(document.getElementById('bt-' + mac)) return; // Уникнення дублікатів
+
+    const devDiv = document.createElement('div');
+    devDiv.id = 'bt-' + mac;
+    devDiv.style.background = '#111';
+    devDiv.style.border = '1px solid #333';
+    devDiv.style.padding = '8px';
+    devDiv.style.margin = '4px 0';
+    devDiv.style.borderRadius = '4px';
+    devDiv.style.cursor = 'pointer';
+    devDiv.style.fontSize = '12px';
+    devDiv.innerHTML = `<span style="color:#fff;"><b>${name}</b></span> <br><span style="color:#666; font-size:10px;">${mac}</span>`;
+    
+    // Подія ініціалізації з'єднання при тапі на девайс
+    devDiv.onclick = () => {
+        devDiv.innerHTML += '<br><span style="color:#eab308; font-size:10px;">⏳ Підключення...</span>';
+        if (window.Capacitor && window.Capacitor.Plugins.TargetHardware) {
+            window.Capacitor.Plugins.TargetHardware.connectToBluetoothDevice({ mac: mac });
+        }
+    };
+
+    btList.appendChild(devDiv);
+};
+
+// Слухачі подій від Android ОС через Capacitor
+if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.TargetHardware) {
+    // Коли знайдено пристрій у радіоефірі
+    window.Capacitor.Plugins.TargetHardware.addListener('onBluetoothDeviceFound', (device) => {
+        window.addBluetoothDeviceToList(device.name, device.mac);
+    });
+
+    // Коли підключення пройшло успішно
+    window.Capacitor.Plugins.TargetHardware.addListener('onBluetoothConnected', (info) => {
+        const devDiv = document.getElementById('bt-' + info.mac);
+        if (devDiv) {
+            devDiv.innerHTML = `<span style="color:#4ade80;"><b>✅ Підключено успішно!</b></span>`;
+            setTimeout(() => {
+                document.getElementById('bt-modal').style.display = 'none'; // Закриваємо панель
+            }, 2000);
+        }
+    });
+}
