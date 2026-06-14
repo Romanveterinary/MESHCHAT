@@ -48,6 +48,9 @@ public class MainActivity extends BridgeActivity {
         private static final int NETWORK_PORT = 8080;
         private DatagramSocket udpSocket;
         private boolean isUdpServerRunning = false;
+        
+        // НОВЕ: Список відомих IP-адрес для "Снайперської" відправки
+        private CopyOnWriteArrayList<String> knownUdpIps = new CopyOnWriteArrayList<>();
 
         private BluetoothAdapter bluetoothAdapter;
         private BluetoothServerSocket btServerSocket;
@@ -79,16 +82,14 @@ public class MainActivity extends BridgeActivity {
         @Override
         protected void handleOnStart() {
             super.handleOnStart();
-            // Шлях для тимчасового зберігання записів
             audioFilePath = getContext().getCacheDir().getAbsolutePath() + "/ptt_mesh.3gp";
-            
             initUdpListener();
             initBluetoothServer();
             getContext().registerReceiver(btReceiver, new IntentFilter(BluetoothDevice.ACTION_FOUND));
         }
 
         // ==========================================
-        // БЛОК РАЦІЇ (PTT) ТА МІКРОФОНА
+        // БЛОК РАЦІЇ (PTT)
         // ==========================================
         @PluginMethod
         public void startVoiceRecord(PluginCall call) {
@@ -96,14 +97,14 @@ public class MainActivity extends BridgeActivity {
                 mediaRecorder = new MediaRecorder();
                 mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
                 mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.THREE_GPP);
-                mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB); // Формат для голосу (мінімальний розмір)
+                mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AMR_NB);
                 mediaRecorder.setOutputFile(audioFilePath);
                 mediaRecorder.prepare();
                 mediaRecorder.start();
                 call.resolve();
             } catch (Exception e) {
                 e.printStackTrace();
-                call.reject("Мікрофон недоступний або немає дозволів");
+                call.reject("Мікрофон недоступний");
             }
         }
 
@@ -111,7 +112,7 @@ public class MainActivity extends BridgeActivity {
         public void stopAndSendVoice(PluginCall call) {
             String mode = call.getString("mode");
             String sender = call.getString("sender");
-            String color = call.getString("color"); // Отримуємо колір відправника
+            String color = call.getString("color");
             
             try {
                 if (mediaRecorder != null) {
@@ -120,7 +121,6 @@ public class MainActivity extends BridgeActivity {
                     mediaRecorder = null;
                 }
                 
-                // Читаємо створений аудіофайл і перетворюємо його на текст (Base64)
                 File file = new File(audioFilePath);
                 byte[] bytes = new byte[(int) file.length()];
                 FileInputStream fis = new FileInputStream(file);
@@ -128,18 +128,14 @@ public class MainActivity extends BridgeActivity {
                 fis.close();
                 String base64Audio = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP);
                 
-                // Формуємо фінальний JSON пакет
                 JSONObject json = new JSONObject();
                 json.put("type", "VOICE");
                 json.put("sender", sender);
                 json.put("color", color);
                 json.put("audio", base64Audio);
                 
-                if ("BLUETOOTH".equalsIgnoreCase(mode)) {
-                    sendDataOverBluetooth(json.toString());
-                } else {
-                    sendDataOverUdp(json.toString());
-                }
+                if ("BLUETOOTH".equalsIgnoreCase(mode)) sendDataOverBluetooth(json.toString());
+                else sendDataOverUdp(json.toString());
                 
                 call.resolve();
             } catch (Exception e) {
@@ -150,14 +146,12 @@ public class MainActivity extends BridgeActivity {
 
         private void playVoicePacket(String base64Audio) {
             try {
-                // Перетворюємо текст (Base64) назад у звуковий файл
                 byte[] bytes = android.util.Base64.decode(base64Audio, android.util.Base64.NO_WRAP);
                 File file = new File(getContext().getCacheDir(), "ptt_recv.3gp");
                 FileOutputStream fos = new FileOutputStream(file);
                 fos.write(bytes);
                 fos.close();
                 
-                // Відтворюємо через динамік
                 if (mediaPlayer != null) {
                     if (mediaPlayer.isPlaying()) mediaPlayer.stop();
                     mediaPlayer.release();
@@ -166,27 +160,22 @@ public class MainActivity extends BridgeActivity {
                 mediaPlayer.setDataSource(file.getAbsolutePath());
                 mediaPlayer.prepare();
                 mediaPlayer.start();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+            } catch (Exception e) { e.printStackTrace(); }
         }
 
         // ==========================================
-        // БЛОК МЕРЕЖІ ТА ОБРОБКИ ПАКЕТІВ
+        // МЕРЕЖА: СЛУХАЧ (ТУТ МИ ЗАХОПЛЮЄМО IP)
         // ==========================================
         private void processIncomingPacket(String rawLine) {
             try {
                 JSONObject json = new JSONObject(rawLine);
                 if ("VOICE".equals(json.optString("type"))) {
-                    // Якщо це голос — відтворюємо звук, а потім відправляємо дані в інтерфейс для відображення в чаті
                     playVoicePacket(json.optString("audio")); 
                     sendDataToJavaScript(rawLine); 
                 } else {
                     sendDataToJavaScript(rawLine);
                 }
-            } catch (Exception e) { 
-                sendDataToJavaScript(rawLine); 
-            }
+            } catch (Exception e) { sendDataToJavaScript(rawLine); }
         }
 
         private void initUdpListener() {
@@ -196,10 +185,17 @@ public class MainActivity extends BridgeActivity {
                 try {
                     udpSocket = new DatagramSocket(NETWORK_PORT);
                     udpSocket.setBroadcast(true);
-                    byte[] buffer = new byte[65000]; // Збільшений буфер для проходження аудіо
+                    byte[] buffer = new byte[65000];
                     while (isUdpServerRunning) {
                         DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                         udpSocket.receive(packet);
+                        
+                        // СНАЙПЕРСЬКЕ ЗАХОПЛЕННЯ: Запам'ятовуємо IP того, хто нам написав
+                        String senderIp = packet.getAddress().getHostAddress();
+                        if (senderIp != null && !knownUdpIps.contains(senderIp) && !senderIp.equals("127.0.0.1")) {
+                            knownUdpIps.add(senderIp);
+                        }
+
                         String rawLine = new String(packet.getData(), 0, packet.getLength());
                         if (!rawLine.trim().isEmpty()) {
                             processIncomingPacket(rawLine);
@@ -209,20 +205,8 @@ public class MainActivity extends BridgeActivity {
             }).start();
         }
 
-        private void listenToBluetoothSocket(BluetoothSocket socket) {
-            new Thread(() -> {
-                try {
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        processIncomingPacket(line);
-                    }
-                } catch (Exception e) { connectedBtSockets.remove(socket); }
-            }).start();
-        }
-
         // ==========================================
-        // ВІДПРАВКА ДАНИХ (TEXT + BROADCAST)
+        // МЕРЕЖА: ВІДПРАВКА (BROADCAST + UNICAST)
         // ==========================================
         @PluginMethod
         public void broadcastPacket(PluginCall call) {
@@ -236,16 +220,31 @@ public class MainActivity extends BridgeActivity {
         private void sendDataOverUdp(final String jsonPacket) {
             new Thread(() -> {
                 try {
-                    DatagramSocket socket = new DatagramSocket();
-                    socket.setBroadcast(true);
                     byte[] dataBytes = jsonPacket.getBytes();
-                    InetAddress broadcastAddress = InetAddress.getByName("255.255.255.255");
-                    socket.send(new DatagramPacket(dataBytes, dataBytes.length, broadcastAddress, NETWORK_PORT));
-                    socket.close();
+                    
+                    // 1. КИЛИМОВЕ БОМБАРДУВАННЯ (Намагаємося пробити фаєрвол Точки доступу)
+                    DatagramSocket bSocket = new DatagramSocket();
+                    bSocket.setBroadcast(true);
+                    try { bSocket.send(new DatagramPacket(dataBytes, dataBytes.length, InetAddress.getByName("255.255.255.255"), NETWORK_PORT)); } catch (Exception e){}
+                    try { bSocket.send(new DatagramPacket(dataBytes, dataBytes.length, InetAddress.getByName("192.168.43.255"), NETWORK_PORT)); } catch (Exception e){}
+                    try { bSocket.send(new DatagramPacket(dataBytes, dataBytes.length, InetAddress.getByName("192.168.49.255"), NETWORK_PORT)); } catch (Exception e){}
+                    bSocket.close();
+
+                    // 2. СНАЙПЕРСЬКИЙ РЕЖИМ (Прямо по збереженим IP адресам)
+                    for (String ip : knownUdpIps) {
+                        try {
+                            DatagramSocket uSocket = new DatagramSocket();
+                            uSocket.send(new DatagramPacket(dataBytes, dataBytes.length, InetAddress.getByName(ip), NETWORK_PORT));
+                            uSocket.close();
+                        } catch (Exception e){}
+                    }
                 } catch (Exception e) { e.printStackTrace(); }
             }).start();
         }
 
+        // ==========================================
+        // БЛОК BLUETOOTH
+        // ==========================================
         @SuppressLint("MissingPermission")
         private void initBluetoothServer() {
             bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
@@ -263,6 +262,18 @@ public class MainActivity extends BridgeActivity {
                         }
                     }
                 } catch (Exception e) { e.printStackTrace(); }
+            }).start();
+        }
+
+        private void listenToBluetoothSocket(BluetoothSocket socket) {
+            new Thread(() -> {
+                try {
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        processIncomingPacket(line);
+                    }
+                } catch (Exception e) { connectedBtSockets.remove(socket); }
             }).start();
         }
 
