@@ -37,9 +37,15 @@
         </div>
 
         <div class="row" style="padding-top: 0; padding-bottom: 4px;">
+            <button class="btn btn-sec" id="scan-bt-btn" style="flex: 1; padding: 6px; font-size: 11px; color:#00ccff; border-color: #00ccff;">🔍 BLUETOOTH</button>
             <button class="btn btn-sec" id="gen-qr-btn" style="flex: 1; padding: 6px; font-size: 11px;">СТВОРІТЬ ЛАНК</button>
             <button class="btn btn-sec" id="scan-qr-btn" style="flex: 1; padding: 6px; font-size: 11px;">ЗЧИТАТИ ЛАНК</button>
             <button class="btn btn-sec" id="reset-chat-btn" style="flex: 0.5; padding: 6px; font-size: 11px; color:#4ade80;">🌍 ЕФІР</button>
+        </div>
+
+        <div id="bt-modal" style="display: none; background: #080808; padding: 10px; border-bottom: 1px solid #00ccff; max-height: 120px; overflow-y: auto; margin: 0 12px 6px 12px; border-radius: 6px;">
+            <div style="font-size: 11px; color: #aaa; margin-bottom: 5px;">Знайдені пристрої Bluetooth:</div>
+            <div id="bt-devices-list"></div>
         </div>
 
         <div id="qr-modal" style="display: none; text-align: center; background: #111; padding: 10px; border-bottom: 1px solid #222;">
