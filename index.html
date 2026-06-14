@@ -29,6 +29,13 @@
         
         <div class="row">
             <input type="text" id="my-callsign" value="Боєць-1" placeholder="Позивний" style="flex: 1;">
+            <select id="my-color" style="flex: 0.3; padding: 10px 5px; text-align: center; font-size: 16px;">
+                <option value="#4ade80" style="background:#000; color:#4ade80;">🟢</option>
+                <option value="#00ccff" style="background:#000; color:#00ccff;">🔵</option>
+                <option value="#ff4444" style="background:#000; color:#ff4444;">🔴</option>
+                <option value="#eab308" style="background:#000; color:#eab308;">🟡</option>
+                <option value="#d946ef" style="background:#000; color:#d946ef;">🟣</option>
+            </select>
             <select id="hardware-select" style="flex: 1.2; font-weight: bold;">
                 <option value="WIFI_DIRECT">📡 АВТОНОМНИЙ Wi-Fi</option>
                 <option value="BLUETOOTH">⚡ BLUETOOTH MESH</option>
@@ -60,8 +67,9 @@
         <div id="chat-box"></div>
 
         <div class="row" style="padding-bottom: 12px;">
+            <button class="btn btn-sec" id="ptt-btn" style="flex: 0.5; background: #440000; color: #ff4444; border-color: #ff4444; font-size: 10px; padding: 10px;">🎙️ РАЦІЯ</button>
             <input type="text" id="msg-input" placeholder="Текст повідомлення..." style="flex: 1;">
-            <button class="btn" id="send-btn" style="width: 80px;">SEND</button>
+            <button class="btn" id="send-btn" style="width: 70px;">SEND</button>
         </div>
     </div>
 
